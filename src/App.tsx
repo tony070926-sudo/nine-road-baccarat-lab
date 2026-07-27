@@ -34,7 +34,15 @@ import {
   loadGameState,
   saveGameState,
 } from './game/storage'
-import type { Bets, PersistedGameState, RoundRecord, ShoeState, Winner } from './types'
+import { isFlyRound } from './game/records'
+import type {
+  Bets,
+  PersistedGameState,
+  PlayMode,
+  RoundRecord,
+  ShoeState,
+  Winner,
+} from './types'
 import './styles.css'
 
 const STARTING_BALANCE = 10_000
@@ -141,6 +149,7 @@ function App() {
   const [bets, setBets] = useState<Bets>({ ...EMPTY_BETS })
   const [selectedChip, setSelectedChip] = useState(100)
   const [isDealing, setIsDealing] = useState(false)
+  const [dealingMode, setDealingMode] = useState<PlayMode | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [rulesOpen, setRulesOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
@@ -217,6 +226,7 @@ function App() {
     activeShoe: ShoeState,
     balanceBefore: number,
     roundBets: Bets,
+    playMode: PlayMode,
   ) => {
     const { shoe, result } = dealRound(activeShoe)
     const settlement = settleBets(roundBets, result)
@@ -227,6 +237,7 @@ function App() {
       shoeId: shoe.id,
       handNumber: shoe.handNumber,
       timestamp: new Date().toISOString(),
+      playMode,
       bets: { ...roundBets },
       settlement,
       balanceBefore,
@@ -245,20 +256,16 @@ function App() {
     }))
     setBets({ ...EMPTY_BETS })
     setIsDealing(false)
+    setDealingMode(null)
     if (shoe.needsShuffle) {
       setNotice('切牌位置已到达：本局有效，下一局将自动开启新牌靴。')
     }
   }
 
-  const handleDeal = () => {
-    const stake = totalBets(bets)
-    const error = stake > 0 ? validateBets(bets, game.balance) : null
-    if (error) {
-      setFormError(error)
-      return
-    }
-
+  const startRound = (roundBets: Bets, playMode: PlayMode) => {
+    if (isDealing) return
     setFormError(null)
+    setDealingMode(playMode)
     setIsDealing(true)
     const activeShoe = game.shoe.needsShuffle ? createShoe() : game.shoe
     if (game.shoe.needsShuffle) {
@@ -266,9 +273,30 @@ function App() {
       setNotice(`已自动开启新牌靴 ${activeShoe.id.slice(-8)}。`)
     }
 
-    const roundBets = { ...bets }
     const balanceBefore = game.balance
-    window.setTimeout(() => commitRound(activeShoe, balanceBefore, roundBets), 620)
+    window.setTimeout(
+      () => commitRound(activeShoe, balanceBefore, roundBets, playMode),
+      620,
+    )
+  }
+
+  const handleDeal = () => {
+    const error = validateBets(bets, game.balance)
+    if (error) {
+      setFormError(error)
+      return
+    }
+
+    startRound({ ...bets }, 'bet')
+  }
+
+  const handleFly = () => {
+    if (totalBets(bets) > 0) {
+      setFormError('飞牌只用于无下注对局，请先清空本局筹码')
+      return
+    }
+
+    startRound({ ...EMPTY_BETS }, 'fly')
   }
 
   const replaceShoe = () => {
@@ -472,18 +500,31 @@ function App() {
                   <p className="eyebrow">CURRENT HAND · 当前局</p>
                   <h2>
                     {isDealing
-                      ? '正在发牌'
+                      ? dealingMode === 'fly'
+                        ? '正在飞牌'
+                        : '正在发牌'
                       : latestRound && latestRound.shoeId === game.shoe.id
                         ? outcomeLabel(latestRound.winner)
                         : '等待开牌'}
                   </h2>
                 </div>
                 {latestRound && latestRound.shoeId === game.shoe.id && !isDealing && (
-                  <div className={`round-net ${latestRound.settlement.net >= 0 ? 'positive' : 'negative'}`}>
-                    <span>本局净输赢</span>
+                  <div
+                    className={`round-net ${
+                      isFlyRound(latestRound)
+                        ? 'fly'
+                        : latestRound.settlement.net >= 0
+                          ? 'positive'
+                          : 'negative'
+                    }`}
+                  >
+                    <span>{isFlyRound(latestRound) ? '本局模式' : '本局净输赢'}</span>
                     <strong>
-                      {latestRound.settlement.net > 0 ? '+' : ''}
-                      {formatNumber(latestRound.settlement.net)}
+                      {isFlyRound(latestRound)
+                        ? '飞牌 · 无下注'
+                        : `${latestRound.settlement.net > 0 ? '+' : ''}${formatNumber(
+                            latestRound.settlement.net,
+                          )}`}
                     </strong>
                   </div>
                 )}
@@ -585,6 +626,7 @@ function App() {
               balance={game.balance}
               selectedChip={selectedChip}
               isDealing={isDealing}
+              dealingMode={dealingMode}
               error={formError}
               hasLastBets={totalBets(game.lastBets) > 0}
               onSelectChip={setSelectedChip}
@@ -594,6 +636,7 @@ function App() {
                 setFormError(null)
               }}
               onRepeat={handleRepeat}
+              onFly={handleFly}
               onDeal={handleDeal}
             />
           </div>

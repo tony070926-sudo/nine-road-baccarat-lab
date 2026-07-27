@@ -84,7 +84,21 @@ export function buildBeadPlate(records: RoundRecord[]): Array<RoadCell<Winner>> 
 
 export function buildBigRoad(records: RoundRecord[]): BigRoadCell[] {
   const nonTies = records.filter((record) => record.winner !== 'tie')
-  if (nonTies.length === 0) return []
+  if (nonTies.length === 0) {
+    if (records.length === 0) return []
+    return [
+      {
+        row: 0,
+        col: 0,
+        value: 'tie',
+        sourceIndex: 0,
+        tieCount: records.length,
+        playerPair: records.some((record) => record.playerPair),
+        bankerPair: records.some((record) => record.bankerPair),
+        roundIds: records.map((record) => record.id),
+      },
+    ]
+  }
 
   const positions = layoutSequence(nonTies.map((record) => record.winner as MainWinner))
   const cells: BigRoadCell[] = positions.map((position, index) => {

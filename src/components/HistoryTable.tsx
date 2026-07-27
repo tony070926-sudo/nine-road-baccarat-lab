@@ -1,4 +1,5 @@
 import { Download, FileJson, ListFilter } from 'lucide-react'
+import { isFlyRound } from '../game/records'
 import type { RoundRecord } from '../types'
 
 interface HistoryTableProps {
@@ -94,10 +95,15 @@ export function HistoryTable({ history, onExportCsv, onExportJson }: HistoryTabl
                   </td>
                   <td>
                     <span className="tag-list">
+                      {isFlyRound(record) && <i className="tag-fly">飞牌</i>}
                       {record.natural && <i>自然牌</i>}
                       {record.playerPair && <i>闲对</i>}
                       {record.bankerPair && <i>庄对</i>}
-                      {!record.natural && !record.playerPair && !record.bankerPair && '—'}
+                      {!isFlyRound(record) &&
+                        !record.natural &&
+                        !record.playerPair &&
+                        !record.bankerPair &&
+                        '—'}
                     </span>
                   </td>
                   <td>{formatNumber(record.settlement.totalStake)}</td>

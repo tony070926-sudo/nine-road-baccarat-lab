@@ -1,4 +1,5 @@
 import type { PersistedGameState } from '../types'
+import { resolvePlayMode } from './records'
 
 const STORAGE_KEY = 'nine-road-baccarat:v1'
 const MAX_HISTORY = 500
@@ -42,6 +43,7 @@ export function historyToCsv(history: PersistedGameState['history']): string {
     'shoe_id',
     'hand_number',
     'timestamp',
+    'play_mode',
     'winner',
     'player_cards',
     'banker_cards',
@@ -62,6 +64,7 @@ export function historyToCsv(history: PersistedGameState['history']): string {
     record.shoeId,
     record.handNumber,
     record.timestamp,
+    resolvePlayMode(record),
     record.winner,
     record.playerCards.map((card) => `${card.rank}-${card.suit}`).join('|'),
     record.bankerCards.map((card) => `${card.rank}-${card.suit}`).join('|'),

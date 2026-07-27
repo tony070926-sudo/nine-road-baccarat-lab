@@ -63,11 +63,18 @@ export interface Settlement {
   breakdown: Partial<Record<keyof Bets, number>>
 }
 
+export type PlayMode = 'bet' | 'fly'
+
 export interface RoundRecord extends DealResult {
   id: string
   shoeId: string
   handNumber: number
   timestamp: string
+  /**
+   * Optional for backwards compatibility with records created before the
+   * dedicated no-bet fly mode was introduced.
+   */
+  playMode?: PlayMode
   bets: Bets
   settlement: Settlement
   balanceBefore: number
@@ -95,7 +102,7 @@ export interface RoadCell<T = Winner | RoadColor> {
   sourceIndex: number
 }
 
-export interface BigRoadCell extends RoadCell<'player' | 'banker'> {
+export interface BigRoadCell extends RoadCell<Winner> {
   tieCount: number
   playerPair: boolean
   bankerPair: boolean

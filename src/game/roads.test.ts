@@ -76,6 +76,18 @@ describe('bead plate and Big Road', () => {
     expect(cells[0].tieCount).toBe(3)
     expect(cells[0].roundIds).toHaveLength(4)
   })
+
+  it('shows leading ties immediately before a Player or Banker result exists', () => {
+    const cells = buildBigRoad(records(['tie', 'tie']))
+    expect(cells).toHaveLength(1)
+    expect(cells[0]).toMatchObject({
+      row: 0,
+      col: 0,
+      value: 'tie',
+      tieCount: 2,
+    })
+    expect(cells[0].roundIds).toEqual(['round-1', 'round-2'])
+  })
 })
 
 describe('derived roads', () => {

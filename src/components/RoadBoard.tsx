@@ -42,10 +42,17 @@ function OutcomeMark({
 }
 
 function MainRoadMark({ cell }: { cell: BigRoadCell }) {
+  const label =
+    cell.value === 'banker'
+      ? '庄'
+      : cell.value === 'player'
+        ? '闲'
+        : '开局和'
+
   return (
     <span
       className={`main-road-mark main-${cell.value}`}
-      title={`${cell.value === 'banker' ? '庄' : '闲'}${cell.tieCount ? ` · 和×${cell.tieCount}` : ''}`}
+      title={`${label}${cell.tieCount ? ` · 和×${cell.tieCount}` : ''}`}
     >
       {cell.tieCount > 0 && (
         <>

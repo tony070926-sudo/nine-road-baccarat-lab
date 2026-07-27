@@ -1,6 +1,6 @@
-import { CircleDollarSign, RotateCcw, Trash2 } from 'lucide-react'
+import { CircleDollarSign, Eye, RotateCcw, Trash2 } from 'lucide-react'
 import { totalBets } from '../game/baccarat'
-import type { Bets } from '../types'
+import type { Bets, PlayMode } from '../types'
 
 const BET_LABELS: Record<keyof Bets, string> = {
   player: '闲',
@@ -17,12 +17,14 @@ interface BettingPanelProps {
   balance: number
   selectedChip: number
   isDealing: boolean
+  dealingMode: PlayMode | null
   error: string | null
   hasLastBets: boolean
   onSelectChip: (chip: number) => void
   onAddBet: (target: keyof Bets) => void
   onClear: () => void
   onRepeat: () => void
+  onFly: () => void
   onDeal: () => void
 }
 
@@ -38,12 +40,14 @@ export function BettingPanel({
   balance,
   selectedChip,
   isDealing,
+  dealingMode,
   error,
   hasLastBets,
   onSelectChip,
   onAddBet,
   onClear,
   onRepeat,
+  onFly,
   onDeal,
 }: BettingPanelProps) {
   const stake = totalBets(bets)
@@ -137,14 +141,23 @@ export function BettingPanel({
           <RotateCcw size={16} />
           重复
         </button>
-        <button className="deal-button" onClick={onDeal} disabled={isDealing}>
+        <button className="fly-button" onClick={onFly} disabled={isDealing}>
+          <Eye size={18} />
+          {dealingMode === 'fly' ? '飞牌中…' : '飞牌 · 不下注'}
+        </button>
+        <button
+          className="deal-button"
+          onClick={onDeal}
+          disabled={isDealing || stake === 0}
+        >
           <CircleDollarSign size={19} />
-          {isDealing ? '开牌中…' : '确认并开牌'}
+          {dealingMode === 'bet' ? '开牌中…' : '确认下注并开牌'}
         </button>
       </div>
 
       <p className="limit-note">
-        练习桌限额：庄/闲 10–10,000 · 和/对子 10–1,000。教学分不可购买、兑换或提现。
+        “飞牌”会在零下注时直接开牌并写入全部路单。练习桌限额：庄/闲 10–10,000 ·
+        和/对子 10–1,000。教学分不可购买、兑换或提现。
       </p>
     </aside>
   )
