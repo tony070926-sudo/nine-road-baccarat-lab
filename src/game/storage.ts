@@ -1,7 +1,8 @@
-import type { PersistedGameState } from '../types'
+import type { PersistedGameState, PersistedPendingRound } from '../types'
 import { resolvePlayMode } from './records'
 
 const STORAGE_KEY = 'nine-road-baccarat:v1'
+const PENDING_STORAGE_KEY = 'nine-road-baccarat:pending:v1'
 const MAX_HISTORY = 500
 
 export function loadGameState(): PersistedGameState | null {
@@ -16,20 +17,64 @@ export function loadGameState(): PersistedGameState | null {
   }
 }
 
-export function saveGameState(state: PersistedGameState): void {
+export function saveGameState(state: PersistedGameState): boolean {
   try {
     const compactState: PersistedGameState = {
       ...state,
       history: state.history.slice(-MAX_HISTORY),
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(compactState))
+    return true
+  } catch {
+    // Storage can be unavailable in private browsing or under a strict policy.
+    return false
+  }
+}
+
+export function loadPendingRound(): PersistedPendingRound | null {
+  try {
+    const raw = localStorage.getItem(PENDING_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as PersistedPendingRound
+    if (
+      parsed.version !== 1 ||
+      !parsed.result ||
+      !parsed.shoeAfter ||
+      !Number.isInteger(parsed.revealedCount)
+    ) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+export function savePendingRound(state: PersistedPendingRound): boolean {
+  try {
+    localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(state))
+    return true
+  } catch {
+    // The round remains playable in memory if storage is unavailable.
+    return false
+  }
+}
+
+export function clearPendingRound(): void {
+  try {
+    localStorage.removeItem(PENDING_STORAGE_KEY)
   } catch {
     // Storage can be unavailable in private browsing or under a strict policy.
   }
 }
 
 export function clearGameState(): void {
-  localStorage.removeItem(STORAGE_KEY)
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(PENDING_STORAGE_KEY)
+  } catch {
+    // Storage can be unavailable in private browsing or under a strict policy.
+  }
 }
 
 function escapeCsv(value: string | number | boolean): string {

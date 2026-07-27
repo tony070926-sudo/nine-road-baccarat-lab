@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   ChevronRight,
@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { BettingPanel } from './components/BettingPanel'
 import { HistoryTable } from './components/HistoryTable'
-import { PlayingCard } from './components/PlayingCard'
+import { PlayingCard, RevealPlayingCard } from './components/PlayingCard'
 import { RoadBoard } from './components/RoadBoard'
 import {
   EMPTY_BETS,
@@ -23,24 +23,36 @@ import {
   cardsRemaining,
   createShoe,
   dealRound,
+  handTotal,
   settleBets,
   totalBets,
   validateBets,
 } from './game/baccarat'
 import {
+  clearPendingRound,
   clearGameState,
   downloadTextFile,
   historyToCsv,
   loadGameState,
+  loadPendingRound,
   saveGameState,
+  savePendingRound,
 } from './game/storage'
 import { isFlyRound } from './game/records'
+import {
+  nextRevealCard,
+  pendingRoundMatchesGame,
+  revealIsComplete,
+  revealedCards,
+  visibleRevealCardIds,
+} from './game/reveal'
+import { cardLabel } from './game/cards'
 import type {
   Bets,
+  PendingRound,
   PersistedGameState,
   PlayMode,
   RoundRecord,
-  ShoeState,
   Winner,
 } from './types'
 import './styles.css'
@@ -79,6 +91,36 @@ function makeInitialState(): PersistedGameState {
     lastBets: { ...EMPTY_BETS },
     sessionStartedAt: new Date().toISOString(),
   }
+}
+
+function loadInitialSession(): {
+  game: PersistedGameState
+  pendingRound: PendingRound | null
+  revealedCount: number
+} {
+  const game = loadGameState() ?? makeInitialState()
+  const storedPending = loadPendingRound()
+
+  if (!storedPending) {
+    return { game, pendingRound: null, revealedCount: 0 }
+  }
+  if (!pendingRoundMatchesGame(game, storedPending)) {
+    clearPendingRound()
+    return { game, pendingRound: null, revealedCount: 0 }
+  }
+
+  const pendingRound: PendingRound = {
+    id: storedPending.id,
+    playMode: storedPending.playMode,
+    bets: storedPending.bets,
+    balanceBefore: storedPending.balanceBefore,
+    sourceShoeId: storedPending.sourceShoeId,
+    sourceCursor: storedPending.sourceCursor,
+    shoeAfter: storedPending.shoeAfter,
+    result: storedPending.result,
+  }
+  const { revealedCount } = storedPending
+  return { game, pendingRound, revealedCount }
 }
 
 function formatNumber(value: number, digits = 2): string {
@@ -144,18 +186,175 @@ function Modal({ title, onClose, children, wide = false }: ModalProps) {
   )
 }
 
+interface RoundHandProps {
+  side: 'player' | 'banker'
+  settledRound: RoundRecord | null
+  pendingRound: PendingRound | null
+  visibleCardIds: Set<string>
+  completedCardIds: Set<string>
+  nextCardId: string | null
+  flippingCardId: string | null
+  pendingTotal: number | null
+  onFlip: (cardId: string) => void
+  onFlipComplete: (cardId: string) => void
+}
+
+function RoundHand({
+  side,
+  settledRound,
+  pendingRound,
+  visibleCardIds,
+  completedCardIds,
+  nextCardId,
+  flippingCardId,
+  pendingTotal,
+  onFlip,
+  onFlipComplete,
+}: RoundHandProps) {
+  const isPlayer = side === 'player'
+  const sideLabel = isPlayer ? '闲' : '庄'
+  const sideEnglish = isPlayer ? 'PLAYER' : 'BANKER'
+  const pendingCards = pendingRound
+    ? isPlayer
+      ? pendingRound.result.playerCards
+      : pendingRound.result.bankerCards
+    : []
+  const settledCards = settledRound
+    ? isPlayer
+      ? settledRound.playerCards
+      : settledRound.bankerCards
+    : []
+  const visiblePendingCards = pendingCards.filter((card) =>
+    visibleCardIds.has(card.id),
+  )
+  const revealedSideCount = pendingCards.filter((card) =>
+    completedCardIds.has(card.id),
+  ).length
+  const settledTotal = settledRound
+    ? isPlayer
+      ? settledRound.playerTotal
+      : settledRound.bankerTotal
+    : null
+  const pair = settledRound
+    ? isPlayer
+      ? settledRound.playerPair
+      : settledRound.bankerPair
+    : false
+
+  return (
+    <div className={`hand hand-${side} ${pendingRound ? 'is-revealing' : ''}`}>
+      <div className="hand-label">
+        <span>
+          {sideLabel} <small>{sideEnglish}</small>
+        </span>
+        <strong>
+          {pendingRound ? (pendingTotal ?? '—') : (settledTotal ?? '—')}
+          <small> 点</small>
+        </strong>
+      </div>
+
+      <div className="cards-row">
+        {pendingRound ? (
+          visiblePendingCards.map((card, index) => {
+            const isFlipping = flippingCardId === card.id
+            return (
+              <RevealPlayingCard
+                card={card}
+                index={index}
+                side={side}
+                faceUp={completedCardIds.has(card.id) || isFlipping}
+                canFlip={nextCardId === card.id && !flippingCardId}
+                isFlipping={isFlipping}
+                onFlip={onFlip}
+                onFlipComplete={onFlipComplete}
+                key={card.id}
+              />
+            )
+          })
+        ) : settledRound ? (
+          settledCards.map((card, index) => (
+            <PlayingCard card={card} index={index} key={card.id} />
+          ))
+        ) : (
+          <>
+            <div className="card-back card-back-static">
+              <span className="card-back-frame">
+                <span className="card-back-medallion">九</span>
+              </span>
+            </div>
+            <div className="card-back card-back-static">
+              <span className="card-back-frame">
+                <span className="card-back-medallion">九</span>
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="hand-tags">
+        {pendingRound ? (
+          <span className="reveal-side-note">
+            已翻 {revealedSideCount} / {visiblePendingCards.length}
+          </span>
+        ) : (
+          <>
+            {settledRound?.natural && <span>自然牌</span>}
+            {pair && <span>{sideLabel}对</span>}
+            {settledCards.length === 3 && <span>补第三张</span>}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function App() {
-  const [game, setGame] = useState<PersistedGameState>(() => loadGameState() ?? makeInitialState())
-  const [bets, setBets] = useState<Bets>({ ...EMPTY_BETS })
+  const [initialSession] = useState(loadInitialSession)
+  const [game, setGame] = useState<PersistedGameState>(initialSession.game)
+  const [bets, setBets] = useState<Bets>(
+    initialSession.pendingRound
+      ? { ...initialSession.pendingRound.bets }
+      : { ...EMPTY_BETS },
+  )
   const [selectedChip, setSelectedChip] = useState(100)
-  const [isDealing, setIsDealing] = useState(false)
-  const [dealingMode, setDealingMode] = useState<PlayMode | null>(null)
+  const [pendingRound, setPendingRound] = useState<PendingRound | null>(
+    initialSession.pendingRound,
+  )
+  const [revealedCount, setRevealedCount] = useState(
+    initialSession.revealedCount,
+  )
+  const [flippingCardId, setFlippingCardId] = useState<string | null>(null)
+  const [revealAnnouncement, setRevealAnnouncement] = useState(
+    initialSession.pendingRound
+      ? `${
+          initialSession.pendingRound.playMode === 'fly'
+            ? '飞牌对局'
+            : '已锁定下注对局'
+        }已恢复，请继续点击亮起的牌背。`
+      : '请先选择下注对象与筹码，然后确认开牌。',
+  )
   const [formError, setFormError] = useState<string | null>(null)
   const [rulesOpen, setRulesOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [newShoeOpen, setNewShoeOpen] = useState(false)
   const [roadFullscreen, setRoadFullscreen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+
+  const gameRef = useRef(game)
+  const pendingRoundRef = useRef<PendingRound | null>(
+    initialSession.pendingRound,
+  )
+  const revealedCountRef = useRef(initialSession.revealedCount)
+  const flippingCardRef = useRef<string | null>(null)
+  const roundLockRef = useRef(Boolean(initialSession.pendingRound))
+  const flipLockRef = useRef(false)
+  const finalizeLockRef = useRef(false)
+  const flipFallbackTimerRef = useRef<number | null>(null)
+  const settleTimerRef = useRef<number | null>(null)
+  const focusTimerRef = useRef<number | null>(null)
+
+  const isDealing = pendingRound !== null
+  const dealingMode = pendingRound?.playMode ?? null
 
   useEffect(() => {
     saveGameState(game)
@@ -172,7 +371,24 @@ function App() {
     return () => window.clearTimeout(timeout)
   }, [notice])
 
+  useEffect(
+    () => () => {
+      if (flipFallbackTimerRef.current !== null) {
+        window.clearTimeout(flipFallbackTimerRef.current)
+      }
+      if (settleTimerRef.current !== null) {
+        window.clearTimeout(settleTimerRef.current)
+      }
+      if (focusTimerRef.current !== null) {
+        window.clearTimeout(focusTimerRef.current)
+      }
+    },
+    [],
+  )
+
   const latestRound = game.history[game.history.length - 1] ?? null
+  const settledCurrentRound =
+    latestRound && latestRound.shoeId === game.shoe.id ? latestRound : null
   const currentShoeRecords = useMemo(
     () => game.history.filter((record) => record.shoeId === game.shoe.id),
     [game.history, game.shoe.id],
@@ -191,6 +407,83 @@ function App() {
       pairs: currentShoeRecords.filter((record) => record.playerPair || record.bankerPair).length,
     }
   }, [currentShoeRecords])
+
+  const visiblePendingCardIds = useMemo(
+    () =>
+      new Set(
+        pendingRound
+          ? visibleRevealCardIds(pendingRound.result, revealedCount)
+          : [],
+      ),
+    [pendingRound, revealedCount],
+  )
+  const completedPendingCardIds = useMemo(
+    () =>
+      new Set(
+        pendingRound
+          ? revealedCards(pendingRound.result, revealedCount).map((card) => card.id)
+          : [],
+      ),
+    [pendingRound, revealedCount],
+  )
+  const pendingNextCard = pendingRound
+    ? nextRevealCard(pendingRound.result, revealedCount)
+    : null
+  const completedPendingCards = pendingRound
+    ? revealedCards(pendingRound.result, revealedCount)
+    : []
+  const revealedPlayerCards = pendingRound
+    ? completedPendingCards.filter((card) =>
+        pendingRound.result.playerCards.some((playerCard) => playerCard.id === card.id),
+      )
+    : []
+  const revealedBankerCards = pendingRound
+    ? completedPendingCards.filter((card) =>
+        pendingRound.result.bankerCards.some((bankerCard) => bankerCard.id === card.id),
+      )
+    : []
+  const pendingPlayerTotal =
+    revealedPlayerCards.length > 0 ? handTotal(revealedPlayerCards) : null
+  const pendingBankerTotal =
+    revealedBankerCards.length > 0 ? handTotal(revealedBankerCards) : null
+  const revealDisplayTotal = pendingRound ? visiblePendingCardIds.size : 0
+
+  useEffect(() => {
+    if (
+      !pendingRound ||
+      flippingCardId ||
+      !pendingNextCard ||
+      rulesOpen ||
+      resetOpen ||
+      newShoeOpen ||
+      roadFullscreen
+    ) {
+      return
+    }
+    if (focusTimerRef.current !== null) {
+      window.clearTimeout(focusTimerRef.current)
+    }
+    focusTimerRef.current = window.setTimeout(() => {
+      document
+        .querySelector<HTMLButtonElement>('.reveal-card.can-flip')
+        ?.focus({ preventScroll: true })
+    }, 90)
+
+    return () => {
+      if (focusTimerRef.current !== null) {
+        window.clearTimeout(focusTimerRef.current)
+        focusTimerRef.current = null
+      }
+    }
+  }, [
+    flippingCardId,
+    newShoeOpen,
+    pendingNextCard,
+    pendingRound,
+    resetOpen,
+    roadFullscreen,
+    rulesOpen,
+  ])
 
   const handleAddBet = (target: keyof Bets) => {
     setFormError(null)
@@ -222,62 +515,249 @@ function App() {
     setFormError(null)
   }
 
-  const commitRound = (
-    activeShoe: ShoeState,
-    balanceBefore: number,
-    roundBets: Bets,
-    playMode: PlayMode,
-  ) => {
-    const { shoe, result } = dealRound(activeShoe)
-    const settlement = settleBets(roundBets, result)
-    const balanceAfter = balanceBefore - settlement.totalStake + settlement.totalReturned
-    const record: RoundRecord = {
-      ...result,
-      id: createRoundId(),
-      shoeId: shoe.id,
-      handNumber: shoe.handNumber,
-      timestamp: new Date().toISOString(),
-      playMode,
-      bets: { ...roundBets },
-      settlement,
-      balanceBefore,
-      balanceAfter,
-      cardsRemaining: cardsRemaining(shoe),
-      rulesetVersion: RULESET_VERSION,
-      shuffleVersion: shoe.shuffleVersion,
+  const releasePendingRound = (clearPersisted = true) => {
+    if (flipFallbackTimerRef.current !== null) {
+      window.clearTimeout(flipFallbackTimerRef.current)
+      flipFallbackTimerRef.current = null
+    }
+    if (settleTimerRef.current !== null) {
+      window.clearTimeout(settleTimerRef.current)
+      settleTimerRef.current = null
+    }
+    pendingRoundRef.current = null
+    revealedCountRef.current = 0
+    flippingCardRef.current = null
+    roundLockRef.current = false
+    flipLockRef.current = false
+    finalizeLockRef.current = false
+    if (clearPersisted) clearPendingRound()
+    setPendingRound(null)
+    setRevealedCount(0)
+    setFlippingCardId(null)
+  }
+
+  const finalizeRound = (roundId: string) => {
+    const current = pendingRoundRef.current
+    const currentGame = gameRef.current
+    if (
+      !current ||
+      current.id !== roundId ||
+      !finalizeLockRef.current ||
+      currentGame.shoe.id !== current.sourceShoeId ||
+      currentGame.shoe.cursor !== current.sourceCursor
+    ) {
+      if (current?.id === roundId) {
+        setNotice('牌靴状态已变化，本局已安全取消且未扣除教学分。')
+        releasePendingRound()
+      }
+      return
+    }
+    if (currentGame.history.some((item) => item.id === current.id)) {
+      releasePendingRound()
+      return
     }
 
-    setGame((previous) => ({
-      ...previous,
+    const settlement = settleBets(current.bets, current.result)
+    const balanceAfter =
+      current.balanceBefore - settlement.totalStake + settlement.totalReturned
+    const record: RoundRecord = {
+      ...current.result,
+      id: current.id,
+      shoeId: current.shoeAfter.id,
+      handNumber: current.shoeAfter.handNumber,
+      timestamp: new Date().toISOString(),
+      playMode: current.playMode,
+      bets: { ...current.bets },
+      settlement,
+      balanceBefore: current.balanceBefore,
+      balanceAfter,
+      cardsRemaining: cardsRemaining(current.shoeAfter),
+      rulesetVersion: RULESET_VERSION,
+      shuffleVersion: current.shoeAfter.shuffleVersion,
+    }
+
+    const nextGame: PersistedGameState = {
+      ...currentGame,
       balance: balanceAfter,
-      shoe,
-      history: [...previous.history, record].slice(-500),
-      lastBets: settlement.totalStake > 0 ? { ...roundBets } : previous.lastBets,
-    }))
+      shoe: current.shoeAfter,
+      history: [...currentGame.history, record].slice(-500),
+      lastBets:
+        settlement.totalStake > 0
+          ? { ...current.bets }
+          : currentGame.lastBets,
+    }
+    const saved = saveGameState(nextGame)
+    gameRef.current = nextGame
+    setGame(nextGame)
     setBets({ ...EMPTY_BETS })
-    setIsDealing(false)
-    setDealingMode(null)
-    if (shoe.needsShuffle) {
+    setRevealAnnouncement(
+      `本局${outcomeLabel(current.result.winner)}，净输赢${
+        settlement.net > 0 ? `正 ${formatNumber(settlement.net)}` : formatNumber(settlement.net)
+      } 教学分。`,
+    )
+    releasePendingRound(saved)
+    window.requestAnimationFrame(() => {
+      if (!document.querySelector('[role="dialog"]')) {
+        document
+          .querySelector<HTMLButtonElement>('.bet-zone:not(:disabled)')
+          ?.focus({ preventScroll: true })
+      }
+    })
+    if (!saved) {
+      setNotice('本局已在当前页面结算，但浏览器阻止本机保存；刷新可能丢失本局。')
+    } else if (current.shoeAfter.needsShuffle) {
       setNotice('切牌位置已到达：本局有效，下一局将自动开启新牌靴。')
     }
   }
 
   const startRound = (roundBets: Bets, playMode: PlayMode) => {
-    if (isDealing) return
+    if (roundLockRef.current || pendingRoundRef.current) return
+    roundLockRef.current = true
     setFormError(null)
-    setDealingMode(playMode)
-    setIsDealing(true)
-    const activeShoe = game.shoe.needsShuffle ? createShoe() : game.shoe
-    if (game.shoe.needsShuffle) {
-      setGame((previous) => ({ ...previous, shoe: activeShoe }))
-      setNotice(`已自动开启新牌靴 ${activeShoe.id.slice(-8)}。`)
+
+    try {
+      const currentGame = gameRef.current
+      const activeShoe = currentGame.shoe.needsShuffle
+        ? createShoe()
+        : currentGame.shoe
+      const { shoe: shoeAfter, result } = dealRound(activeShoe)
+      const pending: PendingRound = {
+        id: createRoundId(),
+        playMode,
+        bets: { ...roundBets },
+        balanceBefore: currentGame.balance,
+        sourceShoeId: activeShoe.id,
+        sourceCursor: activeShoe.cursor,
+        shoeAfter,
+        result,
+      }
+
+      if (currentGame.shoe.needsShuffle) {
+        const activeGame = { ...currentGame, shoe: activeShoe }
+        saveGameState(activeGame)
+        gameRef.current = activeGame
+        setGame(activeGame)
+        setNotice(`已自动开启新牌靴 ${activeShoe.id.slice(-8)}。`)
+      }
+
+      const pendingSaved = savePendingRound({
+        ...pending,
+        version: 1,
+        revealedCount: 0,
+      })
+      pendingRoundRef.current = pending
+      revealedCountRef.current = 0
+      flippingCardRef.current = null
+      flipLockRef.current = false
+      finalizeLockRef.current = false
+      setPendingRound(pending)
+      setRevealedCount(0)
+      setFlippingCardId(null)
+      setRevealAnnouncement(
+        `${playMode === 'fly' ? '飞牌模式' : '下注已锁定'}。请按亮起顺序逐张点击牌背。`,
+      )
+      if (!pendingSaved) {
+        setNotice('浏览器阻止本机保存；本局仍可继续，但刷新后无法恢复。')
+      }
+
+      window.requestAnimationFrame(() => {
+        document.querySelector('#game-table')?.scrollIntoView({
+          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+            ? 'auto'
+            : 'smooth',
+          block: 'start',
+        })
+      })
+    } catch {
+      roundLockRef.current = false
+      setFormError('牌靴暂时无法完成本局，请开启新牌靴后重试')
+    }
+  }
+
+  const completeRevealCard = (roundId: string, cardId: string) => {
+    const current = pendingRoundRef.current
+    const currentCount = revealedCountRef.current
+    const expectedCard = current
+      ? nextRevealCard(current.result, currentCount)
+      : null
+
+    if (
+      !current ||
+      current.id !== roundId ||
+      flippingCardRef.current !== cardId ||
+      expectedCard?.id !== cardId
+    ) {
+      return
     }
 
-    const balanceBefore = game.balance
-    window.setTimeout(
-      () => commitRound(activeShoe, balanceBefore, roundBets, playMode),
-      620,
+    if (flipFallbackTimerRef.current !== null) {
+      window.clearTimeout(flipFallbackTimerRef.current)
+      flipFallbackTimerRef.current = null
+    }
+
+    const nextCount = currentCount + 1
+    revealedCountRef.current = nextCount
+    flippingCardRef.current = null
+    setRevealedCount(nextCount)
+    setFlippingCardId(null)
+
+    const playerIndex = current.result.playerCards.findIndex(
+      (card) => card.id === expectedCard.id,
     )
+    const bankerIndex = current.result.bankerCards.findIndex(
+      (card) => card.id === expectedCard.id,
+    )
+    const sideLabel = playerIndex >= 0 ? '闲家' : '庄家'
+    const sideIndex = playerIndex >= 0 ? playerIndex : bankerIndex
+    setRevealAnnouncement(
+      `${sideLabel}第 ${sideIndex + 1} 张：${cardLabel(expectedCard)}。`,
+    )
+
+    if (revealIsComplete(current.result, nextCount)) {
+      finalizeLockRef.current = true
+      settleTimerRef.current = window.setTimeout(
+        () => finalizeRound(roundId),
+        260,
+      )
+      return
+    }
+
+    savePendingRound({
+      ...current,
+      version: 1,
+      revealedCount: nextCount,
+    })
+    flipLockRef.current = false
+  }
+
+  const handleRevealCard = (cardId: string) => {
+    const current = pendingRoundRef.current
+    const expectedCard = current
+      ? nextRevealCard(current.result, revealedCountRef.current)
+      : null
+
+    if (
+      !current ||
+      flipLockRef.current ||
+      finalizeLockRef.current ||
+      expectedCard?.id !== cardId
+    ) {
+      return
+    }
+
+    flipLockRef.current = true
+    flippingCardRef.current = cardId
+    setFlippingCardId(cardId)
+    setRevealAnnouncement('正在翻开扑克牌…')
+    flipFallbackTimerRef.current = window.setTimeout(
+      () => completeRevealCard(current.id, cardId),
+      1_100,
+    )
+  }
+
+  const handleRevealComplete = (cardId: string) => {
+    const current = pendingRoundRef.current
+    if (current) completeRevealCard(current.id, cardId)
   }
 
   const handleDeal = () => {
@@ -300,18 +780,26 @@ function App() {
   }
 
   const replaceShoe = () => {
+    if (pendingRoundRef.current) return
     const shoe = createShoe()
-    setGame((previous) => ({ ...previous, shoe }))
+    const nextGame = { ...gameRef.current, shoe }
+    gameRef.current = nextGame
+    setGame(nextGame)
     setBets({ ...EMPTY_BETS })
     setNewShoeOpen(false)
+    setRevealAnnouncement('新牌靴已就绪，请选择下注对象与筹码。')
     setNotice(`已手动开启新牌靴 ${shoe.id.slice(-8)}；既有记录仍保留。`)
   }
 
   const resetSimulation = () => {
+    if (pendingRoundRef.current) return
     clearGameState()
-    setGame(makeInitialState())
+    const nextGame = makeInitialState()
+    gameRef.current = nextGame
+    setGame(nextGame)
     setBets({ ...EMPTY_BETS })
     setResetOpen(false)
+    setRevealAnnouncement('请先选择下注对象与筹码，然后确认开牌。')
     setNotice('模拟数据与教学分已重置。')
   }
 
@@ -493,124 +981,96 @@ function App() {
           </div>
 
           <div className="game-layout">
-            <section className={`table-stage ${isDealing ? 'is-dealing' : ''}`} aria-live="polite">
+            <section
+              className={`table-stage ${pendingRound ? 'is-revealing' : ''}`}
+            >
               <div className="felt-pattern" />
               <div className="table-stage-heading">
                 <div>
                   <p className="eyebrow">CURRENT HAND · 当前局</p>
                   <h2>
-                    {isDealing
-                      ? dealingMode === 'fly'
-                        ? '正在飞牌'
-                        : '正在发牌'
-                      : latestRound && latestRound.shoeId === game.shoe.id
-                        ? outcomeLabel(latestRound.winner)
+                    {pendingRound
+                      ? flippingCardId
+                        ? '正在翻牌'
+                        : '点击牌背翻牌'
+                      : settledCurrentRound
+                        ? outcomeLabel(settledCurrentRound.winner)
                         : '等待开牌'}
                   </h2>
                 </div>
-                {latestRound && latestRound.shoeId === game.shoe.id && !isDealing && (
+                {pendingRound ? (
+                  <div className="round-net reveal-progress">
+                    <span>
+                      {pendingRound.playMode === 'fly' ? '飞牌模式' : '下注已锁定'}
+                    </span>
+                    <strong>
+                      {revealedCount} / {revealDisplayTotal}
+                    </strong>
+                  </div>
+                ) : settledCurrentRound ? (
                   <div
                     className={`round-net ${
-                      isFlyRound(latestRound)
+                      isFlyRound(settledCurrentRound)
                         ? 'fly'
-                        : latestRound.settlement.net >= 0
+                        : settledCurrentRound.settlement.net >= 0
                           ? 'positive'
                           : 'negative'
                     }`}
                   >
-                    <span>{isFlyRound(latestRound) ? '本局模式' : '本局净输赢'}</span>
+                    <span>
+                      {isFlyRound(settledCurrentRound) ? '本局模式' : '本局净输赢'}
+                    </span>
                     <strong>
-                      {isFlyRound(latestRound)
+                      {isFlyRound(settledCurrentRound)
                         ? '飞牌 · 无下注'
-                        : `${latestRound.settlement.net > 0 ? '+' : ''}${formatNumber(
-                            latestRound.settlement.net,
+                        : `${settledCurrentRound.settlement.net > 0 ? '+' : ''}${formatNumber(
+                            settledCurrentRound.settlement.net,
                           )}`}
                     </strong>
                   </div>
-                )}
+                ) : null}
               </div>
 
               <div className="hands-layout">
-                <div className="hand hand-player">
-                  <div className="hand-label">
-                    <span>
-                      闲 <small>PLAYER</small>
-                    </span>
-                    <strong>
-                      {latestRound && latestRound.shoeId === game.shoe.id && !isDealing
-                        ? latestRound.playerTotal
-                        : '—'}
-                      <small> 点</small>
-                    </strong>
-                  </div>
-                  <div className="cards-row">
-                    {latestRound && latestRound.shoeId === game.shoe.id && !isDealing ? (
-                      latestRound.playerCards.map((card, index) => (
-                        <PlayingCard card={card} index={index} key={card.id} />
-                      ))
-                    ) : (
-                      <>
-                        <div className="card-back" />
-                        <div className="card-back" />
-                      </>
-                    )}
-                  </div>
-                  <div className="hand-tags">
-                    {latestRound?.natural && latestRound.shoeId === game.shoe.id && !isDealing && (
-                      <span>自然牌</span>
-                    )}
-                    {latestRound?.playerPair && latestRound.shoeId === game.shoe.id && !isDealing && (
-                      <span>闲对</span>
-                    )}
-                    {latestRound &&
-                      latestRound.shoeId === game.shoe.id &&
-                      !isDealing &&
-                      latestRound.playerCards.length === 3 && <span>补第三张</span>}
-                  </div>
-                </div>
+                <RoundHand
+                  side="player"
+                  settledRound={settledCurrentRound}
+                  pendingRound={pendingRound}
+                  visibleCardIds={visiblePendingCardIds}
+                  completedCardIds={completedPendingCardIds}
+                  nextCardId={pendingNextCard?.id ?? null}
+                  flippingCardId={flippingCardId}
+                  pendingTotal={pendingPlayerTotal}
+                  onFlip={handleRevealCard}
+                  onFlipComplete={handleRevealComplete}
+                />
 
                 <div className="versus-mark" aria-hidden="true">
                   <span>VS</span>
                 </div>
 
-                <div className="hand hand-banker">
-                  <div className="hand-label">
-                    <span>
-                      庄 <small>BANKER</small>
-                    </span>
-                    <strong>
-                      {latestRound && latestRound.shoeId === game.shoe.id && !isDealing
-                        ? latestRound.bankerTotal
-                        : '—'}
-                      <small> 点</small>
-                    </strong>
-                  </div>
-                  <div className="cards-row">
-                    {latestRound && latestRound.shoeId === game.shoe.id && !isDealing ? (
-                      latestRound.bankerCards.map((card, index) => (
-                        <PlayingCard card={card} index={index} key={card.id} />
-                      ))
-                    ) : (
-                      <>
-                        <div className="card-back" />
-                        <div className="card-back" />
-                      </>
-                    )}
-                  </div>
-                  <div className="hand-tags">
-                    {latestRound?.natural && latestRound.shoeId === game.shoe.id && !isDealing && (
-                      <span>自然牌</span>
-                    )}
-                    {latestRound?.bankerPair && latestRound.shoeId === game.shoe.id && !isDealing && (
-                      <span>庄对</span>
-                    )}
-                    {latestRound &&
-                      latestRound.shoeId === game.shoe.id &&
-                      !isDealing &&
-                      latestRound.bankerCards.length === 3 && <span>补第三张</span>}
-                  </div>
-                </div>
+                <RoundHand
+                  side="banker"
+                  settledRound={settledCurrentRound}
+                  pendingRound={pendingRound}
+                  visibleCardIds={visiblePendingCardIds}
+                  completedCardIds={completedPendingCardIds}
+                  nextCardId={pendingNextCard?.id ?? null}
+                  flippingCardId={flippingCardId}
+                  pendingTotal={pendingBankerTotal}
+                  onFlip={handleRevealCard}
+                  onFlipComplete={handleRevealComplete}
+                />
               </div>
+
+              <p
+                className="reveal-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                {revealAnnouncement}
+              </p>
 
               <div className="stage-rule-note">
                 <span>点数只取个位</span>

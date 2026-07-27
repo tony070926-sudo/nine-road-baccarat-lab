@@ -143,7 +143,7 @@ export function BettingPanel({
         </button>
         <button className="fly-button" onClick={onFly} disabled={isDealing}>
           <Eye size={18} />
-          {dealingMode === 'fly' ? '飞牌中…' : '飞牌 · 不下注'}
+          {dealingMode === 'fly' ? '飞牌已锁定' : '飞牌 · 不下注'}
         </button>
         <button
           className="deal-button"
@@ -151,13 +151,13 @@ export function BettingPanel({
           disabled={isDealing || stake === 0}
         >
           <CircleDollarSign size={19} />
-          {dealingMode === 'bet' ? '开牌中…' : '确认下注并开牌'}
+          {dealingMode === 'bet' ? '下注已锁定 · 请翻牌' : '锁定下注并发牌'}
         </button>
       </div>
 
       <p className="limit-note">
-        “飞牌”会在零下注时直接开牌并写入全部路单。练习桌限额：庄/闲 10–10,000 ·
-        和/对子 10–1,000。教学分不可购买、兑换或提现。
+        发牌后请到牌桌逐张点击牌背；最后一张翻完才会结算并写入路单。“飞牌”沿用相同流程但不下注。
+        练习桌限额：庄/闲 10–10,000 · 和/对子 10–1,000。教学分不可购买、兑换或提现。
       </p>
     </aside>
   )

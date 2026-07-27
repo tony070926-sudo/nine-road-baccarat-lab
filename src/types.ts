@@ -65,6 +65,22 @@ export interface Settlement {
 
 export type PlayMode = 'bet' | 'fly'
 
+export interface PendingRound {
+  id: string
+  playMode: PlayMode
+  bets: Bets
+  balanceBefore: number
+  sourceShoeId: string
+  sourceCursor: number
+  shoeAfter: ShoeState
+  result: DealResult
+}
+
+export interface PersistedPendingRound extends PendingRound {
+  version: 1
+  revealedCount: number
+}
+
 export interface RoundRecord extends DealResult {
   id: string
   shoeId: string
