@@ -1463,6 +1463,11 @@ function App() {
                 fetchPriority="high"
               />
               <div className="casino-scene-vignette" aria-hidden="true" />
+              <div
+                className="dealer-shoe-motion-anchor"
+                data-dealer-shoe-anchor
+                aria-hidden="true"
+              />
               <div className="table-simulation-corner">
                 <span aria-hidden="true">九</span>
                 <strong>纯模拟 · 无真钱</strong>
@@ -1530,11 +1535,6 @@ function App() {
               </div>
 
               <div className="dealer-sightline">
-                <div
-                  className="dealer-shoe-motion-anchor"
-                  data-dealer-shoe-anchor
-                  aria-hidden="true"
-                />
                 <DealerRoadPanel records={currentShoeRecords} />
                 <span aria-hidden="true">
                   <i />

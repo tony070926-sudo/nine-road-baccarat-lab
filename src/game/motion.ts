@@ -7,6 +7,47 @@ export interface DealMotionToken {
 const DEALER_MOTION_FALLBACK_MS = 1_400
 const USER_MOTION_FALLBACK_MS = 2_800
 
+export const DRAG_REVEAL_COMMIT_PROGRESS = 0.62
+
+interface DragRevealMetricsInput {
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
+  cardHeight: number
+}
+
+export interface DragRevealMetrics {
+  progress: number
+  tilt: number
+  requiredDistance: number
+}
+
+const clamp = (value: number, minimum: number, maximum: number) =>
+  Math.min(maximum, Math.max(minimum, value))
+
+/**
+ * Convert direct pointer travel into a normalized card-squeeze gesture.
+ * Vertical travel is primary, while horizontal travel remains available for
+ * narrow mobile layouts and different player grips.
+ */
+export function dragRevealMetrics({
+  startX,
+  startY,
+  currentX,
+  currentY,
+  cardHeight,
+}: DragRevealMetricsInput): DragRevealMetrics {
+  const deltaX = currentX - startX
+  const deltaY = currentY - startY
+  const requiredDistance = clamp(cardHeight * 0.9, 68, 116)
+  const revealDistance = Math.max(Math.abs(deltaY), Math.abs(deltaX) * 0.72)
+  const progress = clamp(revealDistance / requiredDistance, 0, 1)
+  const tilt = clamp((deltaX / requiredDistance) * 8, -8, 8)
+
+  return { progress, tilt, requiredDistance }
+}
+
 /**
  * Animation callbacks can arrive after a new card or round has started.
  * Advance the game only when the callback still belongs to the active motion.
