@@ -1,6 +1,12 @@
 import type { Card } from '../types'
-import type { CSSProperties, TransitionEvent } from 'react'
+import {
+  useLayoutEffect,
+  useRef,
+  type AnimationEvent,
+  type CSSProperties,
+} from 'react'
 import { cardLabel } from '../game/cards'
+import type { DealMotionToken } from '../game/motion'
 
 const SUIT_SYMBOL = {
   spades: '♠',
@@ -50,8 +56,11 @@ interface RevealPlayingCardProps {
   isFlipping: boolean
   isAutomatic: boolean
   willAutoFlip: boolean
+  isPlaced: boolean
+  dealMotion: DealMotionToken | null
   onFlip: (cardId: string) => void
   onFlipComplete: (cardId: string) => void
+  onDealComplete: (motion: DealMotionToken) => void
 }
 
 export function RevealPlayingCard({
@@ -64,16 +73,65 @@ export function RevealPlayingCard({
   isFlipping,
   isAutomatic,
   willAutoFlip,
+  isPlaced,
+  dealMotion,
   onFlip,
   onFlipComplete,
+  onDealComplete,
 }: RevealPlayingCardProps) {
   const sideLabel = side === 'player' ? '闲家' : '庄家'
+  const cardRef = useRef<HTMLButtonElement>(null)
 
-  const handleTransitionEnd = (event: TransitionEvent<HTMLSpanElement>) => {
+  useLayoutEffect(() => {
+    if (!dealMotion || !cardRef.current) return
+
+    const shoe = document.querySelector<HTMLElement>(
+      '[data-dealer-shoe-anchor]',
+    )
+    if (!shoe) return
+
+    const cardElement = cardRef.current
+    const inlineAnimation = cardElement.style.animation
+    cardElement.style.animation = 'none'
+    const cardRect = cardElement.getBoundingClientRect()
+    const shoeRect = shoe.getBoundingClientRect()
+    const fromX =
+      shoeRect.left + shoeRect.width / 2 - (cardRect.left + cardRect.width / 2)
+    const fromY =
+      shoeRect.top + shoeRect.height / 2 - (cardRect.top + cardRect.height / 2)
+
+    cardElement.style.setProperty('--deal-from-x', `${fromX}px`)
+    cardElement.style.setProperty('--deal-from-y', `${fromY}px`)
+    void cardElement.offsetWidth
+    if (inlineAnimation) {
+      cardElement.style.animation = inlineAnimation
+    } else {
+      cardElement.style.removeProperty('animation')
+    }
+  }, [dealMotion])
+
+  const handleCardAnimationEnd = (
+    event: AnimationEvent<HTMLButtonElement>,
+  ) => {
+    if (
+      dealMotion &&
+      event.currentTarget === event.target &&
+      event.animationName === 'dealer-card-place'
+    ) {
+      onDealComplete(dealMotion)
+    }
+  }
+
+  const handleRevealAnimationEnd = (
+    event: AnimationEvent<HTMLSpanElement>,
+  ) => {
+    const expectedAnimation = isAutomatic
+      ? 'dealer-card-reveal'
+      : 'player-card-reveal'
     if (
       isFlipping &&
       event.currentTarget === event.target &&
-      event.propertyName === 'transform'
+      event.animationName === expectedAnimation
     ) {
       onFlipComplete(card.id)
     }
@@ -81,21 +139,31 @@ export function RevealPlayingCard({
 
   return (
     <button
+      ref={cardRef}
       type="button"
       className={`reveal-card reveal-card-${side} ${faceUp ? 'is-face-up' : ''} ${
         canFlip ? 'can-flip' : ''
       } ${isFlipping ? 'is-flipping' : ''} ${
         isAutomatic ? 'is-auto-flipping' : ''
-      } ${willAutoFlip ? 'will-auto-flip' : ''}`}
+      } ${isFlipping && !isAutomatic ? 'is-user-flipping' : ''} ${
+        willAutoFlip ? 'will-auto-flip' : ''
+      } ${isPlaced ? 'is-placed' : 'is-waiting-deal'} ${
+        dealMotion ? 'is-being-dealt' : ''
+      }`}
       style={
         {
           '--card-index': index,
           '--deal-index': dealIndex,
+          '--deal-angle': side === 'player' ? '-7deg' : '7deg',
         } as CSSProperties
       }
       onClick={() => canFlip && onFlip(card.id)}
+      onAnimationEnd={handleCardAnimationEnd}
+      disabled={!canFlip}
       aria-label={
-        faceUp
+        dealMotion
+          ? `荷官正在发出${sideLabel}第 ${index + 1} 张牌`
+          : faceUp
           ? `${sideLabel}第 ${index + 1} 张，${cardLabel(card)}`
           : willAutoFlip
             ? `等待荷官翻开${sideLabel}第 ${index + 1} 张牌`
@@ -104,8 +172,12 @@ export function RevealPlayingCard({
       aria-disabled={!canFlip}
       tabIndex={canFlip ? 0 : -1}
       data-reveal-card-id={card.id}
+      data-deal-sequence={dealMotion?.sequence}
     >
-      <span className="reveal-card-inner" onTransitionEnd={handleTransitionEnd}>
+      <span
+        className="reveal-card-inner"
+        onAnimationEnd={handleRevealAnimationEnd}
+      >
         <span className="reveal-card-face reveal-card-back" aria-hidden={faceUp}>
           <span className="card-back-frame">
             <span className="card-back-medallion">九</span>
@@ -116,13 +188,38 @@ export function RevealPlayingCard({
         </span>
       </span>
 
-      {(canFlip || (isFlipping && !isAutomatic)) && (
+      {dealMotion && (
+        <span className="dealer-motion-hand is-dealing" aria-hidden="true">
+          <span className="dealer-motion-cuff" />
+          <img
+            src="/assets/card-reveal-hand-v2.webp"
+            alt=""
+            draggable="false"
+            decoding="async"
+          />
+        </span>
+      )}
+
+      {isFlipping && isAutomatic && (
+        <span className="dealer-motion-hand is-revealing" aria-hidden="true">
+          <span className="dealer-motion-cuff" />
+          <img
+            src="/assets/card-reveal-hand-v2.webp"
+            alt=""
+            draggable="false"
+            decoding="async"
+          />
+        </span>
+      )}
+
+      {isFlipping && !isAutomatic && (
         <img
           className={`card-reveal-hand card-reveal-hand-${side}`}
           src="/assets/card-reveal-hand-v2.webp"
           alt=""
           aria-hidden="true"
           draggable="false"
+          decoding="async"
         />
       )}
 

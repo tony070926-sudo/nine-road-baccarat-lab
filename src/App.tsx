@@ -45,6 +45,12 @@ import {
 } from './game/storage'
 import { isFlyRound } from './game/records'
 import {
+  isMatchingDealMotion,
+  motionFallbackMs,
+  newlyVisibleUndealtCardIds,
+  type DealMotionToken,
+} from './game/motion'
+import {
   manualRevealSides,
   nextRevealCard,
   pendingRoundMatchesGame,
@@ -171,6 +177,19 @@ function createRoundId(): string {
     : `round-${Date.now()}`
 }
 
+function roundRevealInstruction(round: PendingRound): string {
+  const revealSides = manualRevealSides(round.bets, round.playMode)
+  if (round.playMode === 'fly') {
+    return '飞牌进行中，本局无下注，荷官将自动开牌并写入路单。'
+  }
+  if (revealSides.length === 1) {
+    return `下注已锁定。本局由你翻开${revealSideLabel(
+      revealSides[0],
+    )}，另一方由荷官自动翻开。`
+  }
+  return '下注已锁定。本局下注涉及双方，请按亮起顺序翻牌。'
+}
+
 interface ModalProps {
   title: string
   onClose: () => void
@@ -217,6 +236,8 @@ interface RoundHandProps {
   pendingRound: PendingRound | null
   roundReady: boolean
   visibleCardIds: Set<string>
+  dealtCardIds: Set<string>
+  activeDealMotion: DealMotionToken | null
   completedCardIds: Set<string>
   nextCardId: string | null
   nextCardRequiresUser: boolean
@@ -225,6 +246,7 @@ interface RoundHandProps {
   pendingTotal: number | null
   onFlip: (cardId: string) => void
   onFlipComplete: (cardId: string) => void
+  onDealComplete: (motion: DealMotionToken) => void
 }
 
 function RoundHand({
@@ -233,6 +255,8 @@ function RoundHand({
   pendingRound,
   roundReady,
   visibleCardIds,
+  dealtCardIds,
+  activeDealMotion,
   completedCardIds,
   nextCardId,
   nextCardRequiresUser,
@@ -241,6 +265,7 @@ function RoundHand({
   pendingTotal,
   onFlip,
   onFlipComplete,
+  onDealComplete,
 }: RoundHandProps) {
   const isPlayer = side === 'player'
   const sideLabel = isPlayer ? '闲' : '庄'
@@ -288,6 +313,11 @@ function RoundHand({
         {pendingRound ? (
           visiblePendingCards.map((card, index) => {
             const isFlipping = flippingCardId === card.id
+            const dealMotion =
+              activeDealMotion?.cardId === card.id
+                ? activeDealMotion
+                : null
+            const isPlaced = dealtCardIds.has(card.id)
             return (
               <RevealPlayingCard
                 card={card}
@@ -301,20 +331,25 @@ function RoundHand({
                 faceUp={completedCardIds.has(card.id) || isFlipping}
                 canFlip={
                   roundReady &&
+                  isPlaced &&
                   nextCardId === card.id &&
                   nextCardRequiresUser &&
                   !flippingCardId
                 }
                 isFlipping={isFlipping}
                 isAutomatic={isFlipping && revealActor === 'dealer'}
+                isPlaced={isPlaced}
+                dealMotion={dealMotion}
                 willAutoFlip={
                   roundReady &&
+                  isPlaced &&
                   nextCardId === card.id &&
                   !nextCardRequiresUser &&
                   !flippingCardId
                 }
                 onFlip={onFlip}
                 onFlipComplete={onFlipComplete}
+                onDealComplete={onDealComplete}
                 key={card.id}
               />
             )
@@ -376,6 +411,19 @@ function App() {
   const [roundReady, setRoundReady] = useState(
     Boolean(initialSession.pendingRound),
   )
+  const [dealtCardIds, setDealtCardIds] = useState<Set<string>>(
+    () =>
+      new Set(
+        initialSession.pendingRound
+          ? visibleRevealCardIds(
+              initialSession.pendingRound.result,
+              initialSession.revealedCount,
+            )
+          : [],
+      ),
+  )
+  const [activeDealMotion, setActiveDealMotion] =
+    useState<DealMotionToken | null>(null)
   const [detailView, setDetailView] = useState<DetailView>(null)
   const [revealAnnouncement, setRevealAnnouncement] = useState(
     initialSession.pendingRound
@@ -404,11 +452,25 @@ function App() {
   const roundLockRef = useRef(Boolean(initialSession.pendingRound))
   const flipLockRef = useRef(false)
   const finalizeLockRef = useRef(false)
+  const dealtCardIdsRef = useRef(
+    new Set(
+      initialSession.pendingRound
+        ? visibleRevealCardIds(
+            initialSession.pendingRound.result,
+            initialSession.revealedCount,
+          )
+        : [],
+    ),
+  )
+  const activeDealMotionRef = useRef<DealMotionToken | null>(null)
+  const dealQueueRef = useRef<string[]>([])
+  const dealMotionSequenceRef = useRef(0)
   const flipFallbackTimerRef = useRef<number | null>(null)
   const settleTimerRef = useRef<number | null>(null)
   const focusTimerRef = useRef<number | null>(null)
   const autoFlipTimerRef = useRef<number | null>(null)
   const dealPhaseTimerRef = useRef<number | null>(null)
+  const dealGapTimerRef = useRef<number | null>(null)
   const crowdCheerTimerRef = useRef<number | null>(null)
   const outcomeCheerTimerRef = useRef<number | null>(null)
   const crowdCheerSequenceRef = useRef(0)
@@ -450,6 +512,9 @@ function App() {
       }
       if (dealPhaseTimerRef.current !== null) {
         window.clearTimeout(dealPhaseTimerRef.current)
+      }
+      if (dealGapTimerRef.current !== null) {
+        window.clearTimeout(dealGapTimerRef.current)
       }
       if (crowdCheerTimerRef.current !== null) {
         window.clearTimeout(crowdCheerTimerRef.current)
@@ -637,6 +702,135 @@ function App() {
     setFormError(null)
   }
 
+  const clearDealTimers = () => {
+    if (dealPhaseTimerRef.current !== null) {
+      window.clearTimeout(dealPhaseTimerRef.current)
+      dealPhaseTimerRef.current = null
+    }
+    if (dealGapTimerRef.current !== null) {
+      window.clearTimeout(dealGapTimerRef.current)
+      dealGapTimerRef.current = null
+    }
+  }
+
+  function finishDealSequence(roundId: string) {
+    if (
+      pendingRoundRef.current?.id !== roundId ||
+      activeDealMotionRef.current ||
+      dealQueueRef.current.length > 0
+    ) {
+      return
+    }
+
+    roundReadyRef.current = true
+    flipLockRef.current = false
+    setRoundReady(true)
+    setRevealAnnouncement(roundRevealInstruction(pendingRoundRef.current))
+  }
+
+  function startNextDealCard(roundId: string) {
+    const current = pendingRoundRef.current
+    if (!current || current.id !== roundId) return
+
+    const cardId = dealQueueRef.current.shift()
+    if (!cardId) {
+      finishDealSequence(roundId)
+      return
+    }
+
+    dealMotionSequenceRef.current += 1
+    const motion: DealMotionToken = {
+      roundId,
+      cardId,
+      sequence: dealMotionSequenceRef.current,
+    }
+    activeDealMotionRef.current = motion
+    setActiveDealMotion(motion)
+
+    const side = revealSideForCard(current.result, cardId)
+    const sideCards =
+      side === 'player'
+        ? current.result.playerCards
+        : current.result.bankerCards
+    const sideIndex = sideCards.findIndex((card) => card.id === cardId)
+    setRevealAnnouncement(
+      `停止下注。荷官正在发给${
+        side ? revealSideLabel(side) : ''
+      }第 ${sideIndex + 1} 张牌…`,
+    )
+
+    dealPhaseTimerRef.current = window.setTimeout(
+      () => completeDealMotion(motion),
+      motionFallbackMs('dealer'),
+    )
+  }
+
+  function completeDealMotion(signal: DealMotionToken) {
+    if (!isMatchingDealMotion(activeDealMotionRef.current, signal)) return
+
+    clearDealTimers()
+    const current = pendingRoundRef.current
+    if (!current || current.id !== signal.roundId) return
+
+    const nextDealtIds = new Set(dealtCardIdsRef.current)
+    nextDealtIds.add(signal.cardId)
+    dealtCardIdsRef.current = nextDealtIds
+    activeDealMotionRef.current = null
+    setDealtCardIds(nextDealtIds)
+    setActiveDealMotion(null)
+
+    if (dealQueueRef.current.length === 0) {
+      finishDealSequence(signal.roundId)
+      return
+    }
+
+    dealGapTimerRef.current = window.setTimeout(() => {
+      dealGapTimerRef.current = null
+      startNextDealCard(signal.roundId)
+    }, 70)
+  }
+
+  function startDealSequence(
+    current: PendingRound,
+    requestedCardIds: readonly string[],
+    announcement: string,
+  ) {
+    const queuedCardIds = requestedCardIds.filter(
+      (cardId) => !dealtCardIdsRef.current.has(cardId),
+    )
+    if (queuedCardIds.length === 0) {
+      finishDealSequence(current.id)
+      return
+    }
+
+    clearDealTimers()
+    dealQueueRef.current = [...queuedCardIds]
+    activeDealMotionRef.current = null
+    roundReadyRef.current = false
+    flipLockRef.current = true
+    setActiveDealMotion(null)
+    setRoundReady(false)
+    setRevealAnnouncement(announcement)
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      window.requestAnimationFrame(() => {
+        if (pendingRoundRef.current?.id !== current.id) return
+        const nextDealtIds = new Set(dealtCardIdsRef.current)
+        queuedCardIds.forEach((cardId) => nextDealtIds.add(cardId))
+        dealtCardIdsRef.current = nextDealtIds
+        dealQueueRef.current = []
+        setDealtCardIds(nextDealtIds)
+        finishDealSequence(current.id)
+      })
+      return
+    }
+
+    dealGapTimerRef.current = window.setTimeout(() => {
+      dealGapTimerRef.current = null
+      startNextDealCard(current.id)
+    }, 30)
+  }
+
   const releasePendingRound = (clearPersisted = true) => {
     if (flipFallbackTimerRef.current !== null) {
       window.clearTimeout(flipFallbackTimerRef.current)
@@ -650,10 +844,10 @@ function App() {
       window.clearTimeout(autoFlipTimerRef.current)
       autoFlipTimerRef.current = null
     }
-    if (dealPhaseTimerRef.current !== null) {
-      window.clearTimeout(dealPhaseTimerRef.current)
-      dealPhaseTimerRef.current = null
-    }
+    clearDealTimers()
+    dealQueueRef.current = []
+    activeDealMotionRef.current = null
+    dealtCardIdsRef.current = new Set()
     pendingRoundRef.current = null
     revealedCountRef.current = 0
     flippingCardRef.current = null
@@ -668,6 +862,8 @@ function App() {
     setFlippingCardId(null)
     setRevealActor(null)
     setRoundReady(true)
+    setDealtCardIds(new Set())
+    setActiveDealMotion(null)
   }
 
   const finalizeRound = (roundId: string) => {
@@ -806,33 +1002,23 @@ function App() {
       flippingCardRef.current = null
       revealActorRef.current = null
       roundReadyRef.current = false
-      flipLockRef.current = false
+      flipLockRef.current = true
       finalizeLockRef.current = false
+      dealtCardIdsRef.current = new Set()
+      activeDealMotionRef.current = null
+      dealQueueRef.current = []
       setPendingRound(pending)
       setRevealedCount(0)
       setFlippingCardId(null)
       setRevealActor(null)
       setRoundReady(false)
-      const revealSides = manualRevealSides(roundBets, playMode)
-      const nextInstruction =
-        playMode === 'fly'
-          ? '飞牌进行中，本局无下注，荷官将自动开牌并写入路单。'
-          : revealSides.length === 1
-            ? `下注已锁定。本局由你翻开${revealSideLabel(
-              revealSides[0],
-              )}，另一方由荷官自动翻开。`
-            : '下注已锁定。本局下注涉及双方，请按亮起顺序翻牌。'
-      setRevealAnnouncement('停止下注。荷官正在按顺序发牌…')
-      if (dealPhaseTimerRef.current !== null) {
-        window.clearTimeout(dealPhaseTimerRef.current)
-      }
-      dealPhaseTimerRef.current = window.setTimeout(() => {
-        if (pendingRoundRef.current?.id !== pending.id) return
-        dealPhaseTimerRef.current = null
-        roundReadyRef.current = true
-        setRoundReady(true)
-        setRevealAnnouncement(nextInstruction)
-      }, 1_350)
+      setDealtCardIds(new Set())
+      setActiveDealMotion(null)
+      startDealSequence(
+        pending,
+        visibleRevealCardIds(pending.result, 0),
+        '停止下注。荷官正在从牌靴依次发出四张底牌…',
+      )
       if (!pendingSaved) {
         setNotice('浏览器阻止本机保存；本局仍可继续，但刷新后无法恢复。')
       }
@@ -936,6 +1122,21 @@ function App() {
       version: 1,
       revealedCount: nextCount,
     })
+
+    const newlyVisibleCards = newlyVisibleUndealtCardIds(
+      visibleRevealCardIds(current.result, currentCount),
+      visibleRevealCardIds(current.result, nextCount),
+      [...dealtCardIdsRef.current],
+    )
+    if (newlyVisibleCards.length > 0) {
+      startDealSequence(
+        current,
+        newlyVisibleCards,
+        '荷官正在补发第三张牌，牌落桌后再继续开牌…',
+      )
+      return
+    }
+
     flipLockRef.current = false
   }
 
@@ -961,6 +1162,7 @@ function App() {
       flipLockRef.current ||
       finalizeLockRef.current ||
       expectedCard?.id !== cardId ||
+      !dealtCardIdsRef.current.has(cardId) ||
       !expectedSide ||
       (actor === 'user') !== requiresUser
     ) {
@@ -1006,10 +1208,16 @@ function App() {
         ? `荷官正在翻开${revealSideLabel(expectedSide)}牌…`
         : `正在翻开${revealSideLabel(expectedSide)}牌…`,
     )
-    flipFallbackTimerRef.current = window.setTimeout(
-      () => completeRevealCard(current.id, cardId),
-      1_100,
-    )
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      window.requestAnimationFrame(() =>
+        completeRevealCard(current.id, cardId),
+      )
+    } else {
+      flipFallbackTimerRef.current = window.setTimeout(
+        () => completeRevealCard(current.id, cardId),
+        motionFallbackMs(actor),
+      )
+    }
   }
 
   useEffect(() => {
@@ -1053,7 +1261,7 @@ function App() {
       if (current?.id === roundId && expected?.id === cardId) {
         beginRevealCardRef.current(cardId, 'dealer')
       }
-    }, 420)
+    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 20 : 420)
 
     return () => {
       if (autoFlipTimerRef.current !== null) {
@@ -1247,6 +1455,13 @@ function App() {
               } ${pendingRound && !roundReady ? 'is-dealing-cards' : ''}`}
             >
               <div className="felt-pattern" />
+              <img
+                className="motion-asset-preload"
+                src="/assets/card-reveal-hand-v2.webp"
+                alt=""
+                aria-hidden="true"
+                fetchPriority="high"
+              />
               <div className="casino-scene-vignette" aria-hidden="true" />
 
               <div className="table-stage-heading dealer-call-panel">
@@ -1311,6 +1526,10 @@ function App() {
               </div>
 
               <div className="dealer-sightline" aria-hidden="true">
+                <div
+                  className="dealer-shoe-motion-anchor"
+                  data-dealer-shoe-anchor
+                />
                 <span>
                   <i />
                   荷官
@@ -1331,6 +1550,8 @@ function App() {
                   pendingRound={pendingRound}
                   roundReady={roundReady}
                   visibleCardIds={visiblePendingCardIds}
+                  dealtCardIds={dealtCardIds}
+                  activeDealMotion={activeDealMotion}
                   completedCardIds={completedPendingCardIds}
                   nextCardId={pendingNextCard?.id ?? null}
                   nextCardRequiresUser={pendingNextRequiresUser}
@@ -1339,6 +1560,7 @@ function App() {
                   pendingTotal={pendingPlayerTotal}
                   onFlip={handleRevealCard}
                   onFlipComplete={handleRevealComplete}
+                  onDealComplete={completeDealMotion}
                 />
 
                 <div className="versus-mark" aria-hidden="true">
@@ -1351,6 +1573,8 @@ function App() {
                   pendingRound={pendingRound}
                   roundReady={roundReady}
                   visibleCardIds={visiblePendingCardIds}
+                  dealtCardIds={dealtCardIds}
+                  activeDealMotion={activeDealMotion}
                   completedCardIds={completedPendingCardIds}
                   nextCardId={pendingNextCard?.id ?? null}
                   nextCardRequiresUser={pendingNextRequiresUser}
@@ -1359,6 +1583,7 @@ function App() {
                   pendingTotal={pendingBankerTotal}
                   onFlip={handleRevealCard}
                   onFlipComplete={handleRevealComplete}
+                  onDealComplete={completeDealMotion}
                 />
 
                 <CrowdCheerOverlay cheer={activeCrowdCheer} />

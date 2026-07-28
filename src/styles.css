@@ -926,6 +926,9 @@ main {
 
 .reveal-card {
   --hand-direction: 1;
+  --deal-from-x: 0px;
+  --deal-from-y: -210px;
+  --deal-angle: -7deg;
   position: relative;
   z-index: calc(4 - var(--card-index));
   width: clamp(77px, 7vw, 103px);
@@ -936,17 +939,35 @@ main {
   background: transparent;
   border: 0;
   border-radius: 9px;
+  appearance: none;
   cursor: default;
   perspective: 1100px;
   touch-action: manipulation;
   transform: translateX(calc(var(--card-index) * -12px)) rotate(calc((var(--card-index) - 1) * 1.5deg));
   transform-origin: bottom center;
-  animation: card-deal-in 520ms cubic-bezier(0.18, 0.84, 0.32, 1.08) both;
-  animation-delay: calc(var(--card-index) * 90ms);
+  will-change: transform, opacity;
 }
 
 .reveal-card-banker {
   --hand-direction: -1;
+}
+
+.reveal-card.is-waiting-deal {
+  visibility: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.reveal-card.is-placed {
+  visibility: visible;
+  opacity: 1;
+}
+
+.reveal-card.is-being-dealt {
+  z-index: 9;
+  visibility: visible;
+  pointer-events: none;
+  animation: dealer-card-place 560ms cubic-bezier(0.18, 0.76, 0.22, 1) both;
 }
 
 .reveal-card.can-flip {
@@ -978,7 +999,6 @@ main {
   inset: 0;
   display: block;
   transform-style: preserve-3d;
-  transition: transform 760ms cubic-bezier(0.2, 0.72, 0.18, 1);
   will-change: transform;
 }
 
@@ -1018,7 +1038,23 @@ main {
 
 .reveal-card.is-flipping {
   z-index: 14;
-  animation: card-lift 760ms cubic-bezier(0.2, 0.72, 0.18, 1) both;
+  pointer-events: none;
+}
+
+.reveal-card.is-user-flipping {
+  animation: player-card-lift 1.08s cubic-bezier(0.2, 0.68, 0.16, 1) both;
+}
+
+.reveal-card.is-user-flipping .reveal-card-inner {
+  animation: player-card-reveal 1.08s cubic-bezier(0.2, 0.68, 0.16, 1) both;
+}
+
+.reveal-card.is-auto-flipping {
+  animation: dealer-card-lift 720ms cubic-bezier(0.2, 0.72, 0.18, 1) both;
+}
+
+.reveal-card.is-auto-flipping .reveal-card-inner {
+  animation: dealer-card-reveal 720ms cubic-bezier(0.2, 0.72, 0.18, 1) both;
 }
 
 .reveal-card-hint {
@@ -1049,8 +1085,8 @@ main {
   position: absolute;
   z-index: 16;
   left: 50%;
-  bottom: -292px;
-  width: clamp(340px, 28vw, 410px);
+  bottom: -250px;
+  width: clamp(300px, 24vw, 350px);
   max-width: none;
   pointer-events: none;
   user-select: none;
@@ -1068,12 +1104,64 @@ main {
   --hand-direction: 1;
 }
 
-.reveal-card.can-flip .card-reveal-hand {
-  animation: hand-ready 1.55s ease-in-out infinite;
+.reveal-card.is-user-flipping .card-reveal-hand {
+  animation: player-hand-reveal 1.08s cubic-bezier(0.2, 0.68, 0.16, 1) both;
 }
 
-.reveal-card.is-flipping .card-reveal-hand {
-  animation: hand-flip 780ms cubic-bezier(0.25, 0.7, 0.2, 1) both;
+.dealer-motion-hand {
+  position: absolute;
+  z-index: 18;
+  top: -204px;
+  left: 50%;
+  display: block;
+  width: clamp(238px, 19vw, 292px);
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0;
+  filter:
+    saturate(0.9)
+    drop-shadow(0 15px 13px rgba(0, 0, 0, 0.28));
+  transform: translateX(-50%);
+  transform-origin: 50% 78%;
+}
+
+.dealer-motion-hand img {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: auto;
+  transform: rotate(180deg);
+}
+
+.dealer-motion-cuff {
+  position: absolute;
+  z-index: 1;
+  top: -88px;
+  left: 50%;
+  width: 42%;
+  height: 126px;
+  background:
+    linear-gradient(
+      180deg,
+      #0d1010 0 72%,
+      #f1eee5 73% 87%,
+      #202323 88% 100%
+    );
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 12px 12px 8px 8px;
+  box-shadow: 0 12px 18px rgba(0, 0, 0, 0.25);
+  clip-path: polygon(8% 0, 92% 0, 78% 100%, 22% 100%);
+  transform: translateX(-50%);
+}
+
+.dealer-motion-hand.is-dealing {
+  animation: dealer-hand-deal 560ms cubic-bezier(0.18, 0.76, 0.22, 1) both;
+}
+
+.dealer-motion-hand.is-revealing {
+  animation: dealer-hand-reveal 720ms cubic-bezier(0.2, 0.72, 0.18, 1) both;
 }
 
 .reveal-side-note {
@@ -2343,22 +2431,106 @@ footer p {
   }
 }
 
-@keyframes card-deal-in {
-  from {
+@keyframes dealer-card-place {
+  0% {
     opacity: 0;
-    transform: translate(50px, -55px) rotate(12deg) scale(0.9);
+    transform:
+      translate3d(var(--deal-from-x), var(--deal-from-y), 0)
+      translateX(calc(var(--card-index) * -12px))
+      rotate(var(--deal-angle))
+      scale(0.82);
+  }
+  10% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 1;
+    transform:
+      translate3d(0, 5px, 0)
+      translateX(calc(var(--card-index) * -12px))
+      rotate(calc((var(--card-index) - 1) * 1.5deg))
+      scale(1.015);
+  }
+  86% {
+    opacity: 1;
+    transform:
+      translate3d(0, -2px, 0)
+      translateX(calc(var(--card-index) * -12px))
+      rotate(calc((var(--card-index) - 1) * 1.5deg))
+      scale(0.995);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(calc(var(--card-index) * -12px))
+      rotate(calc((var(--card-index) - 1) * 1.5deg));
   }
 }
 
-@keyframes card-lift {
+@keyframes player-card-lift {
+  0%,
+  18%,
+  100% {
+    transform: translateX(calc(var(--card-index) * -12px)) translateY(0)
+      rotate(calc((var(--card-index) - 1) * 1.5deg)) scale(1);
+  }
+  35% {
+    transform: translateX(calc(var(--card-index) * -12px)) translateY(-7px)
+      rotate(calc((var(--card-index) - 1) * 1.5deg)) scale(1.035);
+  }
+  62% {
+    transform: translateX(calc(var(--card-index) * -12px)) translateY(-15px)
+      rotate(calc((var(--card-index) - 1) * 1.5deg)) scale(1.045);
+  }
+  84% {
+    transform: translateX(calc(var(--card-index) * -12px)) translateY(-3px)
+      rotate(calc((var(--card-index) - 1) * 1.5deg)) scale(1.012);
+  }
+}
+
+@keyframes dealer-card-lift {
   0%,
   100% {
     transform: translateX(calc(var(--card-index) * -12px)) translateY(0)
       rotate(calc((var(--card-index) - 1) * 1.5deg)) scale(1);
   }
-  48% {
+  42% {
     transform: translateX(calc(var(--card-index) * -12px)) translateY(-9px)
-      rotate(calc((var(--card-index) - 1) * 1.5deg)) scale(1.035);
+      rotate(calc((var(--card-index) - 1) * 1.5deg)) scale(1.03);
+  }
+}
+
+@keyframes player-card-reveal {
+  0%,
+  30% {
+    transform: rotateY(0deg) rotateX(0deg);
+  }
+  43% {
+    transform: rotateY(-9deg) rotateX(2deg);
+  }
+  70% {
+    transform: rotateY(188deg) rotateX(-1deg);
+  }
+  84% {
+    transform: rotateY(177deg) rotateX(0deg);
+  }
+  100% {
+    transform: rotateY(180deg) rotateX(0deg);
+  }
+}
+
+@keyframes dealer-card-reveal {
+  0%,
+  24% {
+    transform: rotateY(0deg);
+  }
+  45% {
+    transform: rotateY(-7deg);
+  }
+  78% {
+    transform: rotateY(186deg);
+  }
+  100% {
+    transform: rotateY(180deg);
   }
 }
 
@@ -2374,40 +2546,81 @@ footer p {
   }
 }
 
-@keyframes hand-ready {
-  0%,
-  100% {
-    opacity: 0.56;
-    transform: translateX(-50%) translateY(29px)
-      scaleX(var(--hand-direction)) scale(0.95);
-  }
-  50% {
-    opacity: 0.9;
-    transform: translateX(-50%) translateY(15px)
-      scaleX(var(--hand-direction)) scale(0.98);
-  }
-}
-
-@keyframes hand-flip {
+@keyframes player-hand-reveal {
   0% {
-    opacity: 0.88;
-    transform: translateX(-50%) translateY(15px)
+    opacity: 0;
+    transform: translateX(-50%) translateY(58px)
+      scaleX(var(--hand-direction)) scale(0.93);
+  }
+  17% {
+    opacity: 0.96;
+    transform: translateX(-50%) translateY(25px)
       scaleX(var(--hand-direction)) scale(0.98);
   }
-  38% {
+  34% {
     opacity: 1;
-    transform: translateX(-50%) translateY(-2px)
-      scaleX(var(--hand-direction)) scale(1);
+    transform: translateX(-50%) translateY(8px)
+      scaleX(var(--hand-direction)) scale(1.01);
   }
-  72% {
-    opacity: 0.88;
-    transform: translateX(-50%) translateY(-13px)
-      scaleX(var(--hand-direction)) scale(0.98);
+  58% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-7px)
+      scaleX(var(--hand-direction)) scale(1.015);
+  }
+  79% {
+    opacity: 0.92;
+    transform: translateX(-50%) translateY(2px)
+      scaleX(var(--hand-direction)) scale(0.99);
   }
   100% {
     opacity: 0;
-    transform: translateX(-50%) translateY(-55px)
-      scaleX(var(--hand-direction)) scale(0.9);
+    transform: translateX(-50%) translateY(76px)
+      scaleX(var(--hand-direction)) scale(0.91);
+  }
+}
+
+@keyframes dealer-hand-deal {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-42px) rotate(-4deg) scale(0.94);
+  }
+  14% {
+    opacity: 0.96;
+  }
+  67% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(2px) rotate(0deg) scale(1);
+  }
+  82% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(8px) rotate(1deg) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-48px) rotate(-3deg) scale(0.93);
+  }
+}
+
+@keyframes dealer-hand-reveal {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-58px) rotate(-3deg) scale(0.93);
+  }
+  20% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-18px) rotate(0deg) scale(0.98);
+  }
+  48% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(4px) rotate(1deg) scale(1);
+  }
+  76% {
+    opacity: 0.95;
+    transform: translateX(-50%) translateY(-1px) rotate(-1deg) scale(0.99);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-68px) rotate(-3deg) scale(0.91);
   }
 }
 
@@ -3038,6 +3251,16 @@ footer p {
   mix-blend-mode: soft-light;
 }
 
+.motion-asset-preload {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  clip-path: inset(50%);
+}
+
 .casino-scene-vignette {
   position: absolute;
   z-index: 1;
@@ -3111,6 +3334,40 @@ footer p {
   font-weight: 500;
 }
 
+.dealer-shoe-motion-anchor {
+  position: absolute;
+  right: clamp(26px, 8%, 74px);
+  bottom: 18px;
+  width: clamp(54px, 6vw, 72px);
+  height: clamp(31px, 3.7vw, 43px);
+  background:
+    linear-gradient(155deg, transparent 0 32%, rgba(238, 224, 182, 0.92) 33% 40%, transparent 41%),
+    linear-gradient(145deg, #303532, #111714 72%);
+  border: 1px solid rgba(235, 215, 158, 0.42);
+  border-radius: 5px 12px 5px 5px;
+  box-shadow:
+    inset 0 0 0 3px rgba(0, 0, 0, 0.22),
+    0 9px 18px rgba(0, 0, 0, 0.34);
+  transform: perspective(180px) rotateX(14deg) rotateZ(-4deg);
+}
+
+.dealer-shoe-motion-anchor::before {
+  position: absolute;
+  top: -5px;
+  right: 9px;
+  width: 64%;
+  height: 13px;
+  content: "";
+  background: repeating-linear-gradient(
+    180deg,
+    #f5f0df 0 2px,
+    #c9c1ad 2px 3px
+  );
+  border: 1px solid rgba(35, 37, 34, 0.64);
+  border-radius: 3px 7px 2px 2px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+}
+
 .first-person-hands {
   z-index: 4;
   width: min(100%, 920px);
@@ -3160,6 +3417,10 @@ footer p {
 .first-person-hands .card-back,
 .first-person-hands .reveal-card {
   width: clamp(66px, 5.7vw, 88px);
+}
+
+.first-person-hands .playing-card {
+  animation: none;
 }
 
 .first-person-hands .versus-mark {
@@ -3332,12 +3593,7 @@ footer p {
   backdrop-filter: blur(6px);
 }
 
-.casino-table-stage.is-dealing-cards .reveal-card {
-  animation: first-person-deal 620ms cubic-bezier(0.18, 0.82, 0.2, 1.08) both;
-  animation-delay: calc(var(--deal-index) * 175ms);
-}
-
-.casino-table-stage.is-dealing-cards .reveal-card-inner {
+.casino-table-stage.is-dealing-cards .reveal-card.is-being-dealt .reveal-card-inner {
   filter: drop-shadow(0 13px 15px rgba(0, 0, 0, 0.28));
 }
 
@@ -3780,23 +4036,6 @@ footer p {
   flex: 0 0 auto;
 }
 
-@keyframes first-person-deal {
-  0% {
-    opacity: 0;
-    transform: translate3d(0, -190px, 0) scale(0.72) rotate(-12deg);
-  }
-
-  72% {
-    opacity: 1;
-    transform: translateX(calc(var(--card-index) * -12px)) translateY(5px) rotate(calc((var(--card-index) - 1) * 1.5deg));
-  }
-
-  100% {
-    opacity: 1;
-    transform: translateX(calc(var(--card-index) * -12px)) rotate(calc((var(--card-index) - 1) * 1.5deg));
-  }
-}
-
 @keyframes chip-land {
   0% {
     opacity: 0;
@@ -4084,6 +4323,44 @@ footer p {
     width: 235px;
   }
 
+  .first-person-hands .hand.is-revealing {
+    overflow: visible;
+  }
+
+  .dealer-motion-hand {
+    top: -154px;
+    width: 206px;
+  }
+
+  .dealer-motion-cuff {
+    top: -62px;
+    height: 92px;
+  }
+
+  .reveal-card.is-being-dealt,
+  .dealer-motion-hand.is-dealing {
+    animation-duration: 520ms;
+  }
+
+  .reveal-card.is-user-flipping,
+  .reveal-card.is-user-flipping .reveal-card-inner,
+  .reveal-card.is-user-flipping .card-reveal-hand {
+    animation-duration: 900ms;
+  }
+
+  .reveal-card.is-auto-flipping,
+  .reveal-card.is-auto-flipping .reveal-card-inner,
+  .dealer-motion-hand.is-revealing {
+    animation-duration: 650ms;
+  }
+
+  .dealer-shoe-motion-anchor {
+    right: 18px;
+    bottom: 14px;
+    width: 54px;
+    height: 31px;
+  }
+
   .dealer-spoken-status {
     width: 98%;
     min-height: 30px;
@@ -4304,7 +4581,8 @@ footer p {
     transition-duration: 0.001ms !important;
   }
 
-  .card-reveal-hand {
+  .card-reveal-hand,
+  .dealer-motion-hand {
     display: none !important;
   }
 }
