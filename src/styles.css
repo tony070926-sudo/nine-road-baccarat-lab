@@ -3170,6 +3170,153 @@ footer p {
   background: rgba(3, 19, 14, 0.72);
 }
 
+.crowd-cheer-layer {
+  position: absolute;
+  z-index: 12;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.crowd-cheer-bubble {
+  position: absolute;
+  display: flex;
+  min-height: 35px;
+  max-width: 168px;
+  gap: 7px;
+  align-items: center;
+  padding: 6px 11px 6px 7px;
+  color: #f5edda;
+  background:
+    linear-gradient(135deg, rgba(12, 30, 24, 0.96), rgba(2, 15, 11, 0.92));
+  border: 1px solid rgba(237, 211, 139, 0.58);
+  border-radius: 16px 16px 16px 5px;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.38),
+    inset 0 1px rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(8px);
+  transform-origin: 12px 100%;
+  animation: crowd-cheer-pop 430ms cubic-bezier(0.16, 0.9, 0.24, 1.18) both;
+}
+
+.crowd-cheer-bubble::after {
+  position: absolute;
+  bottom: -6px;
+  left: 11px;
+  width: 11px;
+  height: 11px;
+  content: "";
+  background: #061a13;
+  border-right: 1px solid rgba(237, 211, 139, 0.5);
+  border-bottom: 1px solid rgba(237, 211, 139, 0.5);
+  transform: rotate(45deg);
+}
+
+.crowd-cheer-bubble strong {
+  position: relative;
+  z-index: 1;
+  color: inherit;
+  font-size: clamp(11px, 1vw, 14px);
+  font-weight: 820;
+  line-height: 1.25;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.62);
+  white-space: nowrap;
+}
+
+.crowd-cheer-avatar {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 31%, #d7b68f 0 19%, transparent 20%),
+    radial-gradient(ellipse at 50% 104%, #766147 0 45%, transparent 46%),
+    linear-gradient(145deg, #263e35, #0b1c16);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(228, 199, 117, 0.09);
+}
+
+.crowd-cheer-player .crowd-cheer-bubble-0 {
+  top: 24%;
+  left: 0;
+}
+
+.crowd-cheer-player .crowd-cheer-bubble-1 {
+  bottom: 8%;
+  left: 3%;
+  animation-delay: 90ms;
+}
+
+.crowd-cheer-player .crowd-cheer-bubble-2 {
+  top: -5%;
+  left: 29%;
+  animation-delay: 170ms;
+}
+
+.crowd-cheer-banker .crowd-cheer-bubble {
+  flex-direction: row-reverse;
+  border-radius: 16px 16px 5px;
+  transform-origin: calc(100% - 12px) 100%;
+}
+
+.crowd-cheer-banker .crowd-cheer-bubble::after {
+  right: 11px;
+  left: auto;
+}
+
+.crowd-cheer-banker .crowd-cheer-bubble-0 {
+  top: 24%;
+  right: 0;
+}
+
+.crowd-cheer-banker .crowd-cheer-bubble-1 {
+  right: 3%;
+  bottom: 8%;
+  animation-delay: 90ms;
+}
+
+.crowd-cheer-banker .crowd-cheer-bubble-2 {
+  top: -5%;
+  right: 29%;
+  animation-delay: 170ms;
+}
+
+.crowd-cheer-celebration .crowd-cheer-bubble {
+  color: #fff0b5;
+  border-color: rgba(247, 212, 105, 0.86);
+  background:
+    radial-gradient(circle at 18% 10%, rgba(218, 174, 61, 0.2), transparent 40%),
+    linear-gradient(135deg, rgba(20, 52, 38, 0.97), rgba(5, 25, 18, 0.95));
+  box-shadow:
+    0 10px 32px rgba(0, 0, 0, 0.42),
+    0 0 23px rgba(230, 195, 90, 0.18);
+}
+
+.crowd-cheer-reaction .crowd-cheer-bubble,
+.crowd-cheer-hush .crowd-cheer-bubble {
+  color: #d5e3dd;
+  border-color: rgba(186, 207, 199, 0.42);
+}
+
+.crowd-cheer-hush .crowd-cheer-bubble {
+  opacity: 0.86;
+}
+
+@keyframes crowd-cheer-pop {
+  from {
+    opacity: 0;
+    transform: translateY(9px) scale(0.78);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .dealer-spoken-status {
   z-index: 5;
   width: min(96%, 760px);
@@ -3881,6 +4028,38 @@ footer p {
     border-width: 1px;
     box-shadow: none;
     transform: none;
+  }
+
+  .crowd-cheer-bubble {
+    display: none;
+    min-height: 31px;
+    max-width: min(142px, 42vw);
+    padding: 5px 9px 5px 6px;
+  }
+
+  .crowd-cheer-bubble-0 {
+    display: flex;
+  }
+
+  .crowd-cheer-bubble strong {
+    overflow: hidden;
+    font-size: 10px;
+    text-overflow: ellipsis;
+  }
+
+  .crowd-cheer-avatar {
+    width: 19px;
+    height: 19px;
+  }
+
+  .crowd-cheer-player .crowd-cheer-bubble-0 {
+    top: -10%;
+    left: 0;
+  }
+
+  .crowd-cheer-banker .crowd-cheer-bubble-0 {
+    top: -10%;
+    right: 0;
   }
 
   .first-person-hands .card-corner {

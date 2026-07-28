@@ -13,6 +13,7 @@
 - 零下注“飞牌”自动开出完整牌局，并同步保留到路单与完整记录
 - 已锁定牌局与翻牌进度在本机恢复，刷新页面不会重抽牌局或取消下注
 - 3D 牌面翻转、纸张纹理与原创透明手部动作，支持键盘和减少动态效果
+- 玩家开牌时按已公开牌面生成桌边助威气泡，使用“公、无边、两边、三边、四边”等常见挤牌术语且不预告暗牌
 - 珠盘路、大路、大眼仔、小路、曱甴路完整大屏
 - 每局牌面、点数、下注、净输赢、余额和规则版本记录
 - 最近 500 局浏览器本地持久化，支持 CSV / JSON 导出
@@ -74,6 +75,7 @@ npx wrangler pages deploy dist --project-name nine-road-baccarat-lab --branch ma
 - [澳门博彩监察协调局：百家樂法定规章](https://www.dicj.gov.mo/web/cn/rules/Bacara.html)
 - [Wizard of Odds：八副牌组合枚举](https://wizardofodds.com/games/baccarat/basics/)
 - [Wizard of Odds：Baccarat Score Boards](https://wizardofodds.com/games/baccarat/history/)
+- [环球博彩：百家樂挤牌习俗与桌边术语](https://wgm8.com/szh-blast-from-the-past-squeeze-play/)
 
 MBS 公开规则允许 4–10 副牌，澳门规则也允许其他副数；八副牌是本模拟器选定的标准配置，并非声称所有金沙现场牌桌都固定使用完全相同的副数或限额。
 

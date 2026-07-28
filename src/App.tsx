@@ -8,6 +8,10 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { BettingPanel } from './components/BettingPanel'
+import {
+  CrowdCheerOverlay,
+  type ActiveCrowdCheer,
+} from './components/CrowdCheerOverlay'
 import { HistoryTable } from './components/HistoryTable'
 import { PlayingCard, RevealPlayingCard } from './components/PlayingCard'
 import { RoadBoard } from './components/RoadBoard'
@@ -22,6 +26,13 @@ import {
   totalBets,
   validateBets,
 } from './game/baccarat'
+import {
+  buildCardRevealCheer,
+  buildSettlementCheer,
+  type CrowdCheer,
+  revealedCardsForSide,
+  sideIsCompleteFromPublicCards,
+} from './game/crowdCheer'
 import {
   clearPendingRound,
   clearGameState,
@@ -78,6 +89,12 @@ const SOURCES = [
     title: 'Wizard of Odds · Baccarat Score Boards',
     description: '赌场路单、龙尾、和局与派生路算法参考。',
     url: 'https://wizardofodds.com/games/baccarat/history/',
+  },
+  {
+    title: '环球博彩 · 百家樂挤牌习俗与桌边术语',
+    description:
+      '“公”、两边、三边、四边与吹牌等现场叫法参考；地区与牌桌之间可能存在差异。',
+    url: 'https://wgm8.com/szh-blast-from-the-past-squeeze-play/',
   },
 ]
 
@@ -373,6 +390,8 @@ function App() {
   const [newShoeOpen, setNewShoeOpen] = useState(false)
   const [roadFullscreen, setRoadFullscreen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [activeCrowdCheer, setActiveCrowdCheer] =
+    useState<ActiveCrowdCheer | null>(null)
 
   const gameRef = useRef(game)
   const pendingRoundRef = useRef<PendingRound | null>(
@@ -390,6 +409,9 @@ function App() {
   const focusTimerRef = useRef<number | null>(null)
   const autoFlipTimerRef = useRef<number | null>(null)
   const dealPhaseTimerRef = useRef<number | null>(null)
+  const crowdCheerTimerRef = useRef<number | null>(null)
+  const outcomeCheerTimerRef = useRef<number | null>(null)
+  const crowdCheerSequenceRef = useRef(0)
   const beginRevealCardRef = useRef<
     (cardId: string, actor: RevealActor) => void
   >(() => undefined)
@@ -428,6 +450,12 @@ function App() {
       }
       if (dealPhaseTimerRef.current !== null) {
         window.clearTimeout(dealPhaseTimerRef.current)
+      }
+      if (crowdCheerTimerRef.current !== null) {
+        window.clearTimeout(crowdCheerTimerRef.current)
+      }
+      if (outcomeCheerTimerRef.current !== null) {
+        window.clearTimeout(outcomeCheerTimerRef.current)
       }
     },
     [],
@@ -507,6 +535,36 @@ function App() {
   const pendingBankerTotal =
     revealedBankerCards.length > 0 ? handTotal(revealedBankerCards) : null
   const revealDisplayTotal = pendingRound ? visiblePendingCardIds.size : 0
+
+  const clearCrowdCheer = () => {
+    if (crowdCheerTimerRef.current !== null) {
+      window.clearTimeout(crowdCheerTimerRef.current)
+      crowdCheerTimerRef.current = null
+    }
+    if (outcomeCheerTimerRef.current !== null) {
+      window.clearTimeout(outcomeCheerTimerRef.current)
+      outcomeCheerTimerRef.current = null
+    }
+    setActiveCrowdCheer(null)
+  }
+
+  const showCrowdCheer = (
+    eventId: string,
+    cheer: CrowdCheer,
+    duration = 3_050,
+  ) => {
+    if (crowdCheerTimerRef.current !== null) {
+      window.clearTimeout(crowdCheerTimerRef.current)
+    }
+
+    crowdCheerSequenceRef.current += 1
+    const id = `${eventId}:${crowdCheerSequenceRef.current}`
+    setActiveCrowdCheer({ id, ...cheer })
+    crowdCheerTimerRef.current = window.setTimeout(() => {
+      crowdCheerTimerRef.current = null
+      setActiveCrowdCheer((current) => (current?.id === id ? null : current))
+    }, duration)
+  }
 
   useEffect(() => {
     if (
@@ -634,6 +692,14 @@ function App() {
     }
 
     const settlement = settleBets(current.bets, current.result)
+    const settlementCheer =
+      current.playMode === 'bet'
+        ? buildSettlementCheer({
+            winner: current.result.winner,
+            settlementNet: settlement.net,
+            manualSides: manualRevealSides(current.bets, current.playMode),
+          })
+        : null
     const balanceAfter =
       current.balanceBefore - settlement.totalStake + settlement.totalReturned
     const record: RoundRecord = {
@@ -672,6 +738,19 @@ function App() {
       } 教学分。`,
     )
     releasePendingRound(saved)
+    if (settlementCheer) {
+      if (outcomeCheerTimerRef.current !== null) {
+        window.clearTimeout(outcomeCheerTimerRef.current)
+      }
+      outcomeCheerTimerRef.current = window.setTimeout(() => {
+        outcomeCheerTimerRef.current = null
+        showCrowdCheer(
+          `${current.id}:settlement`,
+          settlementCheer,
+          3_500,
+        )
+      }, 720)
+    }
     window.requestAnimationFrame(() => {
       if (!document.querySelector('[role="dialog"]')) {
         document
@@ -690,6 +769,7 @@ function App() {
     if (roundLockRef.current || pendingRoundRef.current) return
     roundLockRef.current = true
     setFormError(null)
+    clearCrowdCheer()
 
     try {
       const currentGame = gameRef.current
@@ -807,13 +887,40 @@ function App() {
     const bankerIndex = current.result.bankerCards.findIndex(
       (card) => card.id === expectedCard.id,
     )
-    const sideLabel = playerIndex >= 0 ? '闲家' : '庄家'
+    const revealedSide: RevealSide = playerIndex >= 0 ? 'player' : 'banker'
+    const sideLabel = revealSideLabel(revealedSide)
     const sideIndex = playerIndex >= 0 ? playerIndex : bankerIndex
     setRevealAnnouncement(
       `${completedActor === 'dealer' ? '荷官翻开' : '你翻开'}${sideLabel}第 ${
         sideIndex + 1
       } 张：${cardLabel(expectedCard)}。`,
     )
+
+    const playerRevealedThisCard =
+      completedActor === 'user' &&
+      current.playMode === 'bet' &&
+      manualRevealSides(current.bets, current.playMode).includes(revealedSide)
+    if (playerRevealedThisCard) {
+      const publicCards = revealedCards(current.result, nextCount)
+      const publicSideCards = revealedCardsForSide(
+        current.result,
+        publicCards,
+        revealedSide,
+      )
+      showCrowdCheer(
+        `${current.id}:card:${expectedCard.id}`,
+        buildCardRevealCheer({
+          side: revealedSide,
+          revealedCard: expectedCard,
+          revealedCards: publicSideCards,
+          isSideComplete: sideIsCompleteFromPublicCards(
+            current.result,
+            publicCards,
+            revealedSide,
+          ),
+        }),
+      )
+    }
 
     if (revealIsComplete(current.result, nextCount)) {
       finalizeLockRef.current = true
@@ -865,6 +972,35 @@ function App() {
     revealActorRef.current = actor
     setFlippingCardId(cardId)
     setRevealActor(actor)
+    if (actor === 'user' && current.playMode === 'bet') {
+      const publicCards = revealedCards(
+        current.result,
+        revealedCountRef.current,
+      )
+      const publicSideCards = revealedCardsForSide(
+        current.result,
+        publicCards,
+        expectedSide,
+      )
+      const latestPublicCard = publicSideCards.at(-1)
+      const openingCheer: CrowdCheer = latestPublicCard
+        ? buildCardRevealCheer({
+            side: expectedSide,
+            revealedCard: latestPublicCard,
+            revealedCards: publicSideCards,
+            isSideComplete: false,
+          })
+        : {
+            side: expectedSide,
+            tone: 'anticipation',
+            messages: ['慢慢咪…', '开边！开边！', '亮清！'],
+          }
+      showCrowdCheer(
+        `${current.id}:opening:${cardId}`,
+        openingCheer,
+        1_900,
+      )
+    }
     setRevealAnnouncement(
       actor === 'dealer'
         ? `荷官正在翻开${revealSideLabel(expectedSide)}牌…`
@@ -958,6 +1094,7 @@ function App() {
 
   const replaceShoe = () => {
     if (pendingRoundRef.current) return
+    clearCrowdCheer()
     const shoe = createShoe()
     const nextGame = { ...gameRef.current, shoe }
     gameRef.current = nextGame
@@ -970,6 +1107,7 @@ function App() {
 
   const resetSimulation = () => {
     if (pendingRoundRef.current) return
+    clearCrowdCheer()
     clearGameState()
     const nextGame = makeInitialState()
     gameRef.current = nextGame
@@ -1222,6 +1360,8 @@ function App() {
                   onFlip={handleRevealCard}
                   onFlipComplete={handleRevealComplete}
                 />
+
+                <CrowdCheerOverlay cheer={activeCrowdCheer} />
               </div>
 
               <p
