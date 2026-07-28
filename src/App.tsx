@@ -14,7 +14,7 @@ import {
 } from './components/CrowdCheerOverlay'
 import { HistoryTable } from './components/HistoryTable'
 import { PlayingCard, RevealPlayingCard } from './components/PlayingCard'
-import { RoadBoard } from './components/RoadBoard'
+import { DealerRoadPanel, RoadBoard } from './components/RoadBoard'
 import {
   EMPTY_BETS,
   RULESET_VERSION,
@@ -1363,7 +1363,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell is-minimal-table">
       <a className="skip-link" href="#game-table">
         跳到牌桌
       </a>
@@ -1463,6 +1463,10 @@ function App() {
                 fetchPriority="high"
               />
               <div className="casino-scene-vignette" aria-hidden="true" />
+              <div className="table-simulation-corner">
+                <span aria-hidden="true">九</span>
+                <strong>纯模拟 · 无真钱</strong>
+              </div>
 
               <div className="table-stage-heading dealer-call-panel">
                 <div>
@@ -1525,12 +1529,14 @@ function App() {
                 )}
               </div>
 
-              <div className="dealer-sightline" aria-hidden="true">
+              <div className="dealer-sightline">
                 <div
                   className="dealer-shoe-motion-anchor"
                   data-dealer-shoe-anchor
+                  aria-hidden="true"
                 />
-                <span>
+                <DealerRoadPanel records={currentShoeRecords} />
+                <span aria-hidden="true">
                   <i />
                   荷官
                   <strong>

@@ -4586,3 +4586,251 @@ footer p {
     display: none !important;
   }
 }
+
+/* Minimal single-table presentation */
+.is-minimal-table {
+  min-height: 100svh;
+  background: #04100d;
+}
+
+.is-minimal-table > .topbar,
+.is-minimal-table .casino-table-hud,
+.is-minimal-table .dealer-call-panel,
+.is-minimal-table .dealer-sightline > span,
+.is-minimal-table .casino-rail-note,
+.is-minimal-table .table-companion,
+.is-minimal-table > main > .road-board,
+.is-minimal-table > main > .history-section,
+.is-minimal-table .simulator-disclosure,
+.is-minimal-table > footer {
+  display: none;
+}
+
+.is-minimal-table .casino-main,
+.is-minimal-table .immersive-game-section {
+  width: 100%;
+  min-height: 100svh;
+  max-width: none;
+  padding: 0;
+  margin: 0;
+}
+
+.is-minimal-table .casino-view {
+  min-height: 100svh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.is-minimal-table .casino-table-stage {
+  min-height: 100svh;
+  padding: 10px clamp(12px, 2.2vw, 32px) 10px;
+  border-radius: 0;
+}
+
+.is-minimal-table .casino-table-stage::before {
+  inset: 7px;
+  border-radius: 38% 38% 10px 10px / 16% 16% 10px 10px;
+}
+
+.table-simulation-corner {
+  position: absolute;
+  z-index: 8;
+  top: 14px;
+  right: 18px;
+  display: inline-flex;
+  min-height: 31px;
+  gap: 7px;
+  align-items: center;
+  padding: 5px 9px 5px 6px;
+  color: #bdc9c4;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  background: rgba(3, 16, 12, 0.76);
+  border: 1px solid rgba(231, 208, 144, 0.22);
+  border-radius: 999px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(7px);
+}
+
+.table-simulation-corner span {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: #171c18;
+  font-family: "Cormorant Garamond", "Songti SC", serif;
+  font-size: 14px;
+  background: linear-gradient(145deg, #f0da94, #a87a31);
+  border-radius: 50%;
+}
+
+.table-simulation-corner strong {
+  font-weight: 650;
+}
+
+.is-minimal-table .dealer-sightline {
+  height: clamp(132px, 18vh, 170px);
+  pointer-events: none;
+}
+
+.dealer-road-panel {
+  position: absolute;
+  z-index: 8;
+  bottom: 4px;
+  left: 12px;
+  width: clamp(288px, 25vw, 370px);
+  pointer-events: auto;
+  border-color: rgba(230, 208, 147, 0.45);
+  border-radius: 7px;
+  box-shadow:
+    0 16px 35px rgba(0, 0, 0, 0.38),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+.dealer-road-panel .road-card-header {
+  min-height: 30px;
+  padding: 5px 8px;
+  background:
+    linear-gradient(180deg, rgba(15, 41, 32, 0.98), rgba(6, 24, 18, 0.98));
+}
+
+.dealer-road-panel .road-card-header h3 {
+  font-size: 9px;
+}
+
+.dealer-road-panel .road-card-header span {
+  font-size: 7px;
+}
+
+.dealer-road-panel .road-scroll {
+  max-height: 96px;
+  scrollbar-width: none;
+}
+
+.dealer-road-panel .road-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.dealer-road-panel .road-grid {
+  position: relative;
+  --road-cell: 16px;
+}
+
+.dealer-road-panel .road-grid-big {
+  --road-cell: 16px;
+}
+
+.dealer-road-panel .road-grid-cell {
+  border-color: #c5cfca;
+}
+
+.dealer-road-panel .main-road-mark {
+  width: 70%;
+  height: 70%;
+  border-width: 2px;
+}
+
+.dealer-road-panel .tie-slash {
+  height: 1px;
+}
+
+.dealer-road-panel .tie-count {
+  min-width: 10px;
+  height: 10px;
+  font-size: 6px;
+}
+
+.dealer-road-panel .pair-dot {
+  width: 4px;
+  height: 4px;
+}
+
+.dealer-road-empty {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #6f817a;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  pointer-events: none;
+}
+
+.is-minimal-table .dealer-spoken-status {
+  width: min(92%, 690px);
+  margin-top: 4px;
+}
+
+.is-minimal-table .casino-betting-layer {
+  margin-top: auto;
+}
+
+@media (max-width: 760px) {
+  .is-minimal-table .casino-table-stage {
+    min-height: max(100svh, 1010px);
+    padding: 7px 7px 8px;
+  }
+
+  .table-simulation-corner {
+    top: 8px;
+    right: 8px;
+    min-height: 27px;
+    padding: 4px 7px 4px 5px;
+    font-size: 7px;
+  }
+
+  .table-simulation-corner span {
+    width: 18px;
+    height: 18px;
+    font-size: 12px;
+  }
+
+  .is-minimal-table .dealer-sightline {
+    height: 286px;
+  }
+
+  .dealer-road-panel {
+    right: 82px;
+    bottom: 6px;
+    left: 7px;
+    width: auto;
+  }
+
+  .dealer-road-panel .road-card-header {
+    min-height: 27px;
+    padding: 4px 7px;
+  }
+
+  .dealer-road-panel .road-card-header h3 {
+    font-size: 8px;
+  }
+
+  .dealer-road-panel .road-card-header span {
+    font-size: 6px;
+  }
+
+  .dealer-road-panel .road-scroll {
+    max-height: 78px;
+  }
+
+  .dealer-road-panel .road-grid,
+  .dealer-road-panel .road-grid-big {
+    --road-cell: 13px;
+  }
+
+  .is-minimal-table .dealer-spoken-status {
+    width: calc(100% - 8px);
+  }
+}
+
+@media (max-width: 360px) {
+  .dealer-road-panel {
+    right: 76px;
+  }
+
+  .dealer-road-panel .road-card-header span {
+    display: none;
+  }
+}

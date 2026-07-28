@@ -1,3 +1,4 @@
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import {
   buildBeadPlate,
@@ -22,6 +23,8 @@ interface GridProps<T extends string> {
   records?: RoundRecord[]
   bigCells?: BigRoadCell[]
   className?: string
+  autoFollowKey?: number
+  emptyLabel?: string
 }
 
 function OutcomeMark({
@@ -85,10 +88,22 @@ function RoadGrid<T extends string>({
   records,
   bigCells,
   className = '',
+  autoFollowKey,
+  emptyLabel,
 }: GridProps<T>) {
   const minimumColumns = kind === 'big' ? 26 : kind === 'eye' ? 18 : 12
   const columnCount = columns ?? roadColumnCount(cells, minimumColumns)
   const gridCells = Array.from({ length: 6 * columnCount }, (_, index) => index)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (autoFollowKey === undefined) return
+    const frame = window.requestAnimationFrame(() => {
+      const scroll = scrollRef.current
+      if (scroll) scroll.scrollLeft = scroll.scrollWidth - scroll.clientWidth
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [autoFollowKey, columnCount])
 
   return (
     <section className={`road-card road-card-${kind} ${className}`}>
@@ -96,7 +111,12 @@ function RoadGrid<T extends string>({
         <h3>{title}</h3>
         <span>{subtitle}</span>
       </header>
-      <div className="road-scroll" tabIndex={0} aria-label={`${title}，可横向滚动`}>
+      <div
+        ref={scrollRef}
+        className="road-scroll"
+        tabIndex={0}
+        aria-label={`${title}，可横向滚动`}
+      >
         <div
           className={`road-grid road-grid-${kind}`}
           style={{ '--road-columns': columnCount } as React.CSSProperties}
@@ -122,11 +142,37 @@ function RoadGrid<T extends string>({
               )}
             </span>
           ))}
+          {cells.length === 0 && emptyLabel && (
+            <span className="dealer-road-empty">{emptyLabel}</span>
+          )}
         </div>
       </div>
     </section>
   )
 }
+
+export const DealerRoadPanel = memo(function DealerRoadPanel({
+  records,
+}: {
+  records: RoundRecord[]
+}) {
+  const big = useMemo(() => buildBigRoad(records), [records])
+  const columns = roadColumnCount(big, 18)
+
+  return (
+    <RoadGrid
+      title={`本靴大路 · ${records.length} 局`}
+      subtitle="红庄 · 蓝闲 · 绿和"
+      cells={big}
+      bigCells={big}
+      columns={columns}
+      kind="big"
+      className="dealer-road-panel"
+      autoFollowKey={records.length}
+      emptyLabel="等待第一局"
+    />
+  )
+})
 
 export function RoadBoard({ records, fullscreen, onToggleFullscreen }: RoadBoardProps) {
   const bead = buildBeadPlate(records)
