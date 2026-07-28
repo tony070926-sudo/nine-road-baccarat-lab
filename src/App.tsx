@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
-  ChevronRight,
   CircleAlert,
-  Clock3,
   ExternalLink,
   History,
   RefreshCw,
-  Scale,
   ShieldCheck,
-  Sparkles,
 } from 'lucide-react'
 import { BettingPanel } from './components/BettingPanel'
 import { HistoryTable } from './components/HistoryTable'
@@ -17,9 +13,7 @@ import { PlayingCard, RevealPlayingCard } from './components/PlayingCard'
 import { RoadBoard } from './components/RoadBoard'
 import {
   EMPTY_BETS,
-  HOUSE_EDGES,
   RULESET_VERSION,
-  THEORETICAL_PROBABILITIES,
   cardsRemaining,
   createShoe,
   dealRound,
@@ -62,6 +56,7 @@ import './styles.css'
 
 const STARTING_BALANCE = 10_000
 type RevealActor = 'user' | 'dealer'
+type DetailView = 'road' | 'history' | null
 
 const SOURCES = [
   {
@@ -203,6 +198,7 @@ interface RoundHandProps {
   side: 'player' | 'banker'
   settledRound: RoundRecord | null
   pendingRound: PendingRound | null
+  roundReady: boolean
   visibleCardIds: Set<string>
   completedCardIds: Set<string>
   nextCardId: string | null
@@ -218,6 +214,7 @@ function RoundHand({
   side,
   settledRound,
   pendingRound,
+  roundReady,
   visibleCardIds,
   completedCardIds,
   nextCardId,
@@ -278,9 +275,15 @@ function RoundHand({
               <RevealPlayingCard
                 card={card}
                 index={index}
+                dealIndex={
+                  pendingRound.result.dealOrder.findIndex(
+                    (dealtCard) => dealtCard.id === card.id,
+                  )
+                }
                 side={side}
                 faceUp={completedCardIds.has(card.id) || isFlipping}
                 canFlip={
+                  roundReady &&
                   nextCardId === card.id &&
                   nextCardRequiresUser &&
                   !flippingCardId
@@ -288,6 +291,7 @@ function RoundHand({
                 isFlipping={isFlipping}
                 isAutomatic={isFlipping && revealActor === 'dealer'}
                 willAutoFlip={
+                  roundReady &&
                   nextCardId === card.id &&
                   !nextCardRequiresUser &&
                   !flippingCardId
@@ -352,6 +356,10 @@ function App() {
   )
   const [flippingCardId, setFlippingCardId] = useState<string | null>(null)
   const [revealActor, setRevealActor] = useState<RevealActor | null>(null)
+  const [roundReady, setRoundReady] = useState(
+    Boolean(initialSession.pendingRound),
+  )
+  const [detailView, setDetailView] = useState<DetailView>(null)
   const [revealAnnouncement, setRevealAnnouncement] = useState(
     initialSession.pendingRound
       ? initialSession.pendingRound.playMode === 'fly'
@@ -373,6 +381,7 @@ function App() {
   const revealedCountRef = useRef(initialSession.revealedCount)
   const flippingCardRef = useRef<string | null>(null)
   const revealActorRef = useRef<RevealActor | null>(null)
+  const roundReadyRef = useRef(Boolean(initialSession.pendingRound))
   const roundLockRef = useRef(Boolean(initialSession.pendingRound))
   const flipLockRef = useRef(false)
   const finalizeLockRef = useRef(false)
@@ -380,6 +389,7 @@ function App() {
   const settleTimerRef = useRef<number | null>(null)
   const focusTimerRef = useRef<number | null>(null)
   const autoFlipTimerRef = useRef<number | null>(null)
+  const dealPhaseTimerRef = useRef<number | null>(null)
   const beginRevealCardRef = useRef<
     (cardId: string, actor: RevealActor) => void
   >(() => undefined)
@@ -415,6 +425,9 @@ function App() {
       }
       if (autoFlipTimerRef.current !== null) {
         window.clearTimeout(autoFlipTimerRef.current)
+      }
+      if (dealPhaseTimerRef.current !== null) {
+        window.clearTimeout(dealPhaseTimerRef.current)
       }
     },
     [],
@@ -498,6 +511,7 @@ function App() {
   useEffect(() => {
     if (
       !pendingRound ||
+      !roundReady ||
       flippingCardId ||
       !pendingNextCard ||
       !pendingNextRequiresUser ||
@@ -531,6 +545,7 @@ function App() {
     pendingRound,
     resetOpen,
     roadFullscreen,
+    roundReady,
     rulesOpen,
   ])
 
@@ -577,10 +592,15 @@ function App() {
       window.clearTimeout(autoFlipTimerRef.current)
       autoFlipTimerRef.current = null
     }
+    if (dealPhaseTimerRef.current !== null) {
+      window.clearTimeout(dealPhaseTimerRef.current)
+      dealPhaseTimerRef.current = null
+    }
     pendingRoundRef.current = null
     revealedCountRef.current = 0
     flippingCardRef.current = null
     revealActorRef.current = null
+    roundReadyRef.current = true
     roundLockRef.current = false
     flipLockRef.current = false
     finalizeLockRef.current = false
@@ -589,6 +609,7 @@ function App() {
     setRevealedCount(0)
     setFlippingCardId(null)
     setRevealActor(null)
+    setRoundReady(true)
   }
 
   const finalizeRound = (roundId: string) => {
@@ -704,22 +725,34 @@ function App() {
       revealedCountRef.current = 0
       flippingCardRef.current = null
       revealActorRef.current = null
+      roundReadyRef.current = false
       flipLockRef.current = false
       finalizeLockRef.current = false
       setPendingRound(pending)
       setRevealedCount(0)
       setFlippingCardId(null)
       setRevealActor(null)
+      setRoundReady(false)
       const revealSides = manualRevealSides(roundBets, playMode)
-      setRevealAnnouncement(
+      const nextInstruction =
         playMode === 'fly'
           ? '飞牌进行中，本局无下注，荷官将自动开牌并写入路单。'
           : revealSides.length === 1
             ? `下注已锁定。本局由你翻开${revealSideLabel(
-                revealSides[0],
+              revealSides[0],
               )}，另一方由荷官自动翻开。`
-            : '下注已锁定。本局下注涉及双方，请按亮起顺序翻牌。',
-      )
+            : '下注已锁定。本局下注涉及双方，请按亮起顺序翻牌。'
+      setRevealAnnouncement('停止下注。荷官正在按顺序发牌…')
+      if (dealPhaseTimerRef.current !== null) {
+        window.clearTimeout(dealPhaseTimerRef.current)
+      }
+      dealPhaseTimerRef.current = window.setTimeout(() => {
+        if (pendingRoundRef.current?.id !== pending.id) return
+        dealPhaseTimerRef.current = null
+        roundReadyRef.current = true
+        setRoundReady(true)
+        setRevealAnnouncement(nextInstruction)
+      }, 1_350)
       if (!pendingSaved) {
         setNotice('浏览器阻止本机保存；本局仍可继续，但刷新后无法恢复。')
       }
@@ -817,6 +850,7 @@ function App() {
 
     if (
       !current ||
+      !roundReadyRef.current ||
       flipLockRef.current ||
       finalizeLockRef.current ||
       expectedCard?.id !== cardId ||
@@ -858,6 +892,7 @@ function App() {
   useEffect(() => {
     if (
       !pendingRound ||
+      !roundReady ||
       !pendingNextCard ||
       pendingNextRequiresUser ||
       flippingCardId ||
@@ -898,6 +933,7 @@ function App() {
     pendingRound,
     resetOpen,
     roadFullscreen,
+    roundReady,
     rulesOpen,
   ])
 
@@ -968,6 +1004,18 @@ function App() {
     )
   }
 
+  const openDetailView = (view: Exclude<DetailView, null>) => {
+    setDetailView(view)
+    window.requestAnimationFrame(() => {
+      document.querySelector('#table-details')?.scrollIntoView({
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'auto'
+          : 'smooth',
+        block: 'start',
+      })
+    })
+  }
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#game-table">
@@ -975,7 +1023,7 @@ function App() {
       </a>
 
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="九点牌靴首页">
+        <a className="brand" href="#game-table" aria-label="九点牌靴模拟牌桌">
           <span className="brand-mark" aria-hidden="true">
             九
           </span>
@@ -986,8 +1034,8 @@ function App() {
         </a>
 
         <nav aria-label="主导航">
-          <a href="#road-board">路单</a>
-          <a href="#history">记录</a>
+          <button onClick={() => openDetailView('road')}>路单大屏</button>
+          <button onClick={() => openDetailView('history')}>牌局记录</button>
           <button onClick={() => setRulesOpen(true)}>规则与来源</button>
         </nav>
 
@@ -1007,113 +1055,46 @@ function App() {
         </div>
       </header>
 
-      <main id="top">
-        <section className="hero">
-          <div className="hero-glow hero-glow-one" />
-          <div className="hero-glow hero-glow-two" />
-          <div className="hero-copy">
-            <p className="eyebrow">EIGHT-DECK PUNTO BANCO · 8 副牌</p>
-            <h1>
-              真实牌靴概率，
-              <br />
-              一局一证的<span>百家乐实验室</span>
-            </h1>
-            <p className="hero-lead">
-              以公开监管规则为基准，用 Web Crypto 洗牌、无放回发牌和完整补牌矩阵生成每局；
-              不强行拟合比例，不把路单包装成预测。
-            </p>
-            <div className="hero-actions">
-              <a className="primary-link" href="#game-table">
-                进入模拟牌桌
-                <ChevronRight size={18} />
-              </a>
-              <button className="text-button" onClick={() => setRulesOpen(true)}>
-                <BookOpen size={17} />
-                查看规则依据
-              </button>
-            </div>
-          </div>
-
-          <div className="probability-panel" aria-label="八副牌理论概率">
-            <div className="probability-header">
-              <span>
-                <Sparkles size={16} />
-                八副牌理论基准
-              </span>
-              <small>组合枚举值</small>
-            </div>
-            <div className="probability-row probability-banker">
-              <span>
-                <i>B</i>庄家
-              </span>
-              <strong>{(THEORETICAL_PROBABILITIES.banker * 100).toFixed(4)}%</strong>
-              <small>庄注优势 {(HOUSE_EDGES.banker * 100).toFixed(4)}%</small>
-            </div>
-            <div className="probability-row probability-player">
-              <span>
-                <i>P</i>闲家
-              </span>
-              <strong>{(THEORETICAL_PROBABILITIES.player * 100).toFixed(4)}%</strong>
-              <small>闲注优势 {(HOUSE_EDGES.player * 100).toFixed(4)}%</small>
-            </div>
-            <div className="probability-row probability-tie">
-              <span>
-                <i>T</i>和局
-              </span>
-              <strong>{(THEORETICAL_PROBABILITIES.tie * 100).toFixed(4)}%</strong>
-              <small>和注优势 {(HOUSE_EDGES.tie * 100).toFixed(4)}%</small>
-            </div>
-            <p>
-              <CircleAlert size={14} />
-              单副牌靴会自然偏离理论比例，偏离不等于失真。
-            </p>
-          </div>
-        </section>
-
-        <section className="trust-strip" aria-label="模拟器保证">
-          <span>
-            <ShieldCheck size={18} />
-            Web Crypto 无模偏差洗牌
-          </span>
-          <span>
-            <Scale size={18} />
-            监管规则补牌与结算
-          </span>
-          <span>
-            <History size={18} />
-            最多 500 局本机记录
-          </span>
-          <span>
-            <Clock3 size={18} />
-            当前会话始于{' '}
-            {new Intl.DateTimeFormat('zh-CN', {
-              hour: '2-digit',
-              minute: '2-digit',
-            }).format(new Date(game.sessionStartedAt))}
-          </span>
-        </section>
-
-        <section className="game-section" id="game-table">
-          <div className="table-statusbar">
+      <main id="top" className="casino-main">
+        <section className="game-section immersive-game-section" id="game-table">
+          <div className="table-statusbar casino-table-hud">
             <div>
-              <span>桌号</span>
-              <strong>LAB 08</strong>
+              <span>模拟桌</span>
+              <strong>九点 08</strong>
             </div>
             <div>
               <span>牌靴</span>
-              <strong>{game.shoe.id.slice(-8)}</strong>
+              <strong>{game.shoe.id.slice(-6)}</strong>
             </div>
             <div>
               <span>局号</span>
-              <strong>{String(game.shoe.handNumber + 1).padStart(2, '0')}</strong>
+              <strong>#{String(game.shoe.handNumber + 1).padStart(2, '0')}</strong>
             </div>
             <div>
               <span>余牌</span>
               <strong>{cardsRemaining(game.shoe)}</strong>
             </div>
-            <div>
-              <span>切牌</span>
-              <strong>{game.shoe.cutAtRemaining} 张</strong>
+            <div className="mini-road-screen" aria-label="最近牌局结果">
+              <span>最近牌局</span>
+              <div>
+                {currentShoeRecords.length === 0 ? (
+                  <small>等待第一局</small>
+                ) : (
+                  currentShoeRecords.slice(-12).map((record) => (
+                    <i
+                      key={record.id}
+                      className={`mini-result mini-result-${record.winner}`}
+                      title={outcomeLabel(record.winner)}
+                    >
+                      {record.winner === 'banker'
+                        ? '庄'
+                        : record.winner === 'player'
+                          ? '闲'
+                          : '和'}
+                    </i>
+                  ))
+                )}
+              </div>
             </div>
             <div className="table-status-live">
               <i />
@@ -1121,34 +1102,42 @@ function App() {
             </div>
           </div>
 
-          <div className="game-layout">
+          <div className="game-layout casino-view">
             <section
-              className={`table-stage ${pendingRound ? 'is-revealing' : ''}`}
+              className={`table-stage casino-table-stage ${
+                pendingRound ? 'is-revealing' : ''
+              } ${pendingRound && !roundReady ? 'is-dealing-cards' : ''}`}
             >
               <div className="felt-pattern" />
-              <div className="table-stage-heading">
+              <div className="casino-scene-vignette" aria-hidden="true" />
+
+              <div className="table-stage-heading dealer-call-panel">
                 <div>
-                  <p className="eyebrow">CURRENT HAND · 当前局</p>
+                  <p className="eyebrow">LIVE DEALER · 第一视角</p>
                   <h2>
                     {pendingRound
-                      ? flippingCardId
-                        ? revealActor === 'dealer'
-                          ? '荷官正在翻牌'
-                          : '正在翻牌'
-                        : pendingNextRequiresUser
-                          ? '点击下注一方牌背'
-                          : '等待荷官翻牌'
+                      ? !roundReady
+                        ? '荷官正在发牌'
+                        : flippingCardId
+                          ? revealActor === 'dealer'
+                            ? '荷官正在开牌'
+                            : '请翻开牌面'
+                          : pendingNextRequiresUser
+                            ? `请开${pendingNextSide ? revealSideLabel(pendingNextSide) : ''}牌`
+                            : '荷官正在开牌'
                       : settledCurrentRound
                         ? outcomeLabel(settledCurrentRound.winner)
-                        : '等待开牌'}
+                        : '请下注'}
                   </h2>
                 </div>
                 {pendingRound ? (
                   <div className="round-net reveal-progress">
                     <span>
-                      {pendingRound.playMode === 'fly'
-                        ? '飞牌 · 自动'
-                        : revealScopeLabel(pendingManualSides)}
+                      {!roundReady
+                        ? '按顺序发牌'
+                        : pendingRound.playMode === 'fly'
+                          ? '飞牌 · 自动'
+                          : revealScopeLabel(pendingManualSides)}
                     </span>
                     <strong>
                       {revealedCount} / {revealDisplayTotal}
@@ -1165,24 +1154,44 @@ function App() {
                     }`}
                   >
                     <span>
-                      {isFlyRound(settledCurrentRound) ? '本局模式' : '本局净输赢'}
+                      {isFlyRound(settledCurrentRound) ? '飞牌结果' : '本局净输赢'}
                     </span>
                     <strong>
                       {isFlyRound(settledCurrentRound)
-                        ? '飞牌 · 无下注'
+                        ? '已写入路单'
                         : `${settledCurrentRound.settlement.net > 0 ? '+' : ''}${formatNumber(
                             settledCurrentRound.settlement.net,
                           )}`}
                     </strong>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="round-net table-ready-badge">
+                    <span>8 副真实牌靴</span>
+                    <strong>BETTING OPEN</strong>
+                  </div>
+                )}
               </div>
 
-              <div className="hands-layout">
+              <div className="dealer-sightline" aria-hidden="true">
+                <span>
+                  <i />
+                  荷官
+                  <strong>
+                    {pendingRound
+                      ? !roundReady
+                        ? '发牌中'
+                        : '牌局进行中'
+                      : '等待下注'}
+                  </strong>
+                </span>
+              </div>
+
+              <div className="hands-layout first-person-hands">
                 <RoundHand
                   side="player"
                   settledRound={settledCurrentRound}
                   pendingRound={pendingRound}
+                  roundReady={roundReady}
                   visibleCardIds={visiblePendingCardIds}
                   completedCardIds={completedPendingCardIds}
                   nextCardId={pendingNextCard?.id ?? null}
@@ -1202,6 +1211,7 @@ function App() {
                   side="banker"
                   settledRound={settledCurrentRound}
                   pendingRound={pendingRound}
+                  roundReady={roundReady}
                   visibleCardIds={visiblePendingCardIds}
                   completedCardIds={completedPendingCardIds}
                   nextCardId={pendingNextCard?.id ?? null}
@@ -1215,7 +1225,7 @@ function App() {
               </div>
 
               <p
-                className="reveal-status"
+                className="reveal-status dealer-spoken-status"
                 role="status"
                 aria-live="polite"
                 aria-atomic="true"
@@ -1223,131 +1233,102 @@ function App() {
                 {revealAnnouncement}
               </p>
 
-              <div className="stage-rule-note">
-                <span>点数只取个位</span>
+              <BettingPanel
+                bets={bets}
+                balance={game.balance}
+                selectedChip={selectedChip}
+                isDealing={isDealing}
+                dealingMode={dealingMode}
+                error={formError}
+                hasLastBets={totalBets(game.lastBets) > 0}
+                onSelectChip={setSelectedChip}
+                onAddBet={handleAddBet}
+                onClear={() => {
+                  setBets({ ...EMPTY_BETS })
+                  setFormError(null)
+                }}
+                onRepeat={handleRepeat}
+                onFly={handleFly}
+                onDeal={handleDeal}
+              />
+
+              <div className="stage-rule-note casino-rail-note">
+                <span>真实无放回牌靴</span>
                 <i />
-                <span>8 / 9 为自然牌</span>
+                <span>玩家只翻下注侧</span>
                 <i />
-                <span>补牌由规则自动决定</span>
+                <span>纯模拟 · 无真钱</span>
               </div>
             </section>
-
-            <BettingPanel
-              bets={bets}
-              balance={game.balance}
-              selectedChip={selectedChip}
-              isDealing={isDealing}
-              dealingMode={dealingMode}
-              error={formError}
-              hasLastBets={totalBets(game.lastBets) > 0}
-              onSelectChip={setSelectedChip}
-              onAddBet={handleAddBet}
-              onClear={() => {
-                setBets({ ...EMPTY_BETS })
-                setFormError(null)
-              }}
-              onRepeat={handleRepeat}
-              onFly={handleFly}
-              onDeal={handleDeal}
-            />
           </div>
         </section>
 
-        <section className="live-stats" aria-label="当前牌靴统计">
-          <div>
-            <span>本靴局数</span>
-            <strong>{stats.count}</strong>
-            <small>余 {cardsRemaining(game.shoe)} 张</small>
+        <section className="table-companion" id="table-details">
+          <div className="compact-shoe-stats" aria-label="当前牌靴统计">
+            <span>
+              本靴 <strong>{stats.count}</strong> 局
+            </span>
+            <span className="stat-banker">
+              庄 <strong>{stats.banker}</strong>
+              <small>{statPercent(stats.banker, stats.count)}</small>
+            </span>
+            <span className="stat-player">
+              闲 <strong>{stats.player}</strong>
+              <small>{statPercent(stats.player, stats.count)}</small>
+            </span>
+            <span className="stat-tie">
+              和 <strong>{stats.tie}</strong>
+              <small>{statPercent(stats.tie, stats.count)}</small>
+            </span>
           </div>
-          <div className="stat-banker">
-            <span>庄家</span>
-            <strong>{stats.banker}</strong>
-            <small>{statPercent(stats.banker, stats.count)}</small>
-          </div>
-          <div className="stat-player">
-            <span>闲家</span>
-            <strong>{stats.player}</strong>
-            <small>{statPercent(stats.player, stats.count)}</small>
-          </div>
-          <div className="stat-tie">
-            <span>和局</span>
-            <strong>{stats.tie}</strong>
-            <small>{statPercent(stats.tie, stats.count)}</small>
-          </div>
-          <div>
-            <span>自然牌</span>
-            <strong>{stats.naturals}</strong>
-            <small>{statPercent(stats.naturals, stats.count)}</small>
-          </div>
-          <div>
-            <span>含对子局</span>
-            <strong>{stats.pairs}</strong>
-            <small>{statPercent(stats.pairs, stats.count)}</small>
-          </div>
-        </section>
-
-        <RoadBoard
-          records={currentShoeRecords}
-          fullscreen={roadFullscreen}
-          onToggleFullscreen={() => setRoadFullscreen((value) => !value)}
-        />
-
-        <HistoryTable history={game.history} onExportCsv={exportCsv} onExportJson={exportJson} />
-
-        <section className="method-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">METHODOLOGY · 可复核设计</p>
-              <h2>为什么这不是“按比例开奖”</h2>
-            </div>
-          </div>
-          <div className="method-grid">
-            <article>
-              <span>01</span>
-              <h3>真实 416 张牌靴</h3>
-              <p>八副完整扑克牌经 Web Crypto 驱动的 Fisher–Yates 洗牌，每张牌只能被发出一次。</p>
-            </article>
-            <article>
-              <span>02</span>
-              <h3>固定发牌与补牌表</h3>
-              <p>依次发闲、庄、闲、庄，再根据自然牌与标准补牌矩阵决定是否补第三张。</p>
-            </article>
-            <article>
-              <span>03</span>
-              <h3>短期偏差原样保留</h3>
-              <p>45.8597% 等是超大样本理论值；单靴连庄、连闲或和局偏多都可能自然发生。</p>
-            </article>
-            <article>
-              <span>04</span>
-              <h3>逐局可导出审计</h3>
-              <p>每局保存牌面、发牌结果、点数、注项、结算、余额及规则版本，可导出 CSV/JSON。</p>
-            </article>
-          </div>
-        </section>
-
-        <section className="source-section">
-          <div className="source-copy">
-            <p className="eyebrow">PUBLIC SOURCES · 公开依据</p>
-            <h2>规则来自监管文本，不来自营销话术</h2>
-            <p>
-              本版本固定为八副牌标准佣金桌。公开 MBS 规则本身允许 4–10
-              副牌，澳门规则允许其他副数；因此页面不会声称所有金沙现场桌都使用完全相同配置或限额。
-            </p>
-            <button className="outline-button" onClick={() => setRulesOpen(true)}>
-              查看完整赔率与补牌表
+          <div className="table-detail-actions">
+            <button
+              className={detailView === 'road' ? 'is-active' : ''}
+              onClick={() => setDetailView(detailView === 'road' ? null : 'road')}
+              aria-pressed={detailView === 'road'}
+            >
+              查看路单大屏
+            </button>
+            <button
+              className={detailView === 'history' ? 'is-active' : ''}
+              onClick={() =>
+                setDetailView(detailView === 'history' ? null : 'history')
+              }
+              aria-pressed={detailView === 'history'}
+            >
+              <History size={16} />
+              完整牌局记录
+            </button>
+            <button onClick={() => setRulesOpen(true)}>
+              <BookOpen size={16} />
+              规则与真实性
             </button>
           </div>
-          <div className="source-list">
-            {SOURCES.map((source) => (
-              <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
-                <span>
-                  <strong>{source.title}</strong>
-                  <small>{source.description}</small>
-                </span>
-                <ExternalLink size={17} />
-              </a>
-            ))}
-          </div>
+        </section>
+
+        {detailView === 'road' && (
+          <RoadBoard
+            records={currentShoeRecords}
+            fullscreen={roadFullscreen}
+            onToggleFullscreen={() => setRoadFullscreen((value) => !value)}
+          />
+        )}
+
+        {detailView === 'history' && (
+          <HistoryTable
+            history={game.history}
+            onExportCsv={exportCsv}
+            onExportJson={exportJson}
+          />
+        )}
+
+        <section className="simulator-disclosure">
+          <ShieldCheck size={20} />
+          <p>
+            八副牌经 Web Crypto 洗牌，并按公开监管补牌规则逐张发出。教学分不可购买、兑换或提现；
+            视觉场景为原创模拟环境，与任何实体娱乐场无关。
+          </p>
+          <button onClick={() => setRulesOpen(true)}>查看公开依据</button>
         </section>
       </main>
 

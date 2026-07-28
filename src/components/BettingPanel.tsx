@@ -12,6 +12,18 @@ const BET_LABELS: Record<keyof Bets, string> = {
 
 const CHIPS = [10, 50, 100, 500, 1_000]
 
+const BET_OPTIONS: Array<{
+  key: keyof Bets
+  odds: string
+  className: string
+}> = [
+  { key: 'playerPair', odds: '11 : 1', className: 'bet-player-pair' },
+  { key: 'bankerPair', odds: '11 : 1', className: 'bet-banker-pair' },
+  { key: 'player', odds: '1 : 1', className: 'bet-player' },
+  { key: 'tie', odds: '8 : 1', className: 'bet-tie' },
+  { key: 'banker', odds: '0.95 : 1', className: 'bet-banker' },
+]
+
 interface BettingPanelProps {
   bets: Bets
   balance: number
@@ -52,34 +64,21 @@ export function BettingPanel({
 }: BettingPanelProps) {
   const stake = totalBets(bets)
 
-  const betOptions: Array<{
-    key: keyof Bets
-    odds: string
-    hint: string
-    className: string
-  }> = [
-    { key: 'player', odds: '净赢 1 : 1', hint: '总返还 2.00×', className: 'bet-player' },
-    { key: 'tie', odds: '净赢 8 : 1', hint: '总返还 9.00×', className: 'bet-tie' },
-    { key: 'banker', odds: '净赢 0.95 : 1', hint: '已扣 5% 佣金', className: 'bet-banker' },
-    { key: 'playerPair', odds: '净赢 11 : 1', hint: '首两张同点数', className: 'bet-pair' },
-    { key: 'bankerPair', odds: '净赢 11 : 1', hint: '首两张同点数', className: 'bet-pair' },
-  ]
-
   return (
-    <aside className="betting-panel" aria-label="模拟下注区">
-      <div className="panel-heading">
+    <aside className="betting-panel casino-betting-layer" aria-label="模拟下注区">
+      <div className="felt-betting-heading">
         <div>
-          <p className="eyebrow">PRACTICE CHIPS</p>
-          <h2>模拟下注</h2>
+          <span className="dealer-call-dot" aria-hidden="true" />
+          <p>{isDealing ? 'NO MORE BETS · 停止下注' : 'PLACE YOUR BETS · 请将筹码放到下注区'}</p>
         </div>
-        <div className="balance-block">
-          <span>教学分余额</span>
+        <div className="table-credit" aria-live="polite">
+          <span>模拟积分 · 不可兑换</span>
           <strong>{formatPoints(balance)}</strong>
         </div>
       </div>
 
-      <div className="bet-grid">
-        {betOptions.map((option) => (
+      <div className="bet-grid felt-bet-grid">
+        {BET_OPTIONS.map((option) => (
           <button
             key={option.key}
             className={`bet-zone ${option.className} ${bets[option.key] > 0 ? 'has-bet' : ''}`}
@@ -94,71 +93,82 @@ export function BettingPanel({
               {option.key === 'tie' && <small>TIE</small>}
             </span>
             <span className="bet-zone-odds">{option.odds}</span>
-            <span className="bet-zone-hint">{option.hint}</span>
             {bets[option.key] > 0 && (
-              <strong className="placed-chip">{formatPoints(bets[option.key])}</strong>
+              <span
+                className="placed-chip table-chip-stack"
+                key={`${option.key}-${bets[option.key]}`}
+                aria-hidden="true"
+              >
+                <i />
+                <i />
+                <strong>{formatPoints(bets[option.key])}</strong>
+              </span>
             )}
           </button>
         ))}
       </div>
 
-      <div className="chip-rack" role="radiogroup" aria-label="选择筹码">
-        {CHIPS.map((chip, index) => (
-          <button
-            key={chip}
-            className={`chip chip-${index + 1} ${selectedChip === chip ? 'is-selected' : ''}`}
-            onClick={() => onSelectChip(chip)}
-            role="radio"
-            aria-checked={selectedChip === chip}
-            disabled={isDealing}
-          >
-            <span>{chip >= 1_000 ? `${chip / 1_000}K` : chip}</span>
+      <div className="player-rail">
+        <div className="rail-actions rail-actions-left">
+          <button className="table-tool-button" onClick={onClear} disabled={isDealing || stake === 0}>
+            <Trash2 size={16} />
+            清桌
           </button>
-        ))}
+          <button
+            className="table-tool-button"
+            onClick={onRepeat}
+            disabled={isDealing || !hasLastBets}
+          >
+            <RotateCcw size={16} />
+            重复
+          </button>
+        </div>
+
+        <div>
+          <span className="chip-rack-label">选择筹码</span>
+          <div className="chip-rack" role="radiogroup" aria-label="选择筹码">
+            {CHIPS.map((chip, index) => (
+              <button
+                key={chip}
+                className={`chip chip-${index + 1} ${selectedChip === chip ? 'is-selected' : ''}`}
+                onClick={() => onSelectChip(chip)}
+                role="radio"
+                aria-checked={selectedChip === chip}
+                disabled={isDealing}
+              >
+                <span>{chip >= 1_000 ? `${chip / 1_000}K` : chip}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="rail-actions rail-actions-right">
+          <button className="fly-button table-fly-button" onClick={onFly} disabled={isDealing}>
+            <Eye size={17} />
+            {dealingMode === 'fly' ? '飞牌中' : '飞牌旁观'}
+          </button>
+          <button
+            className="deal-button table-deal-button"
+            onClick={onDeal}
+            disabled={isDealing || stake === 0}
+          >
+            <CircleDollarSign size={18} />
+            {dealingMode === 'bet' ? '停止下注' : `确认下注 ${stake > 0 ? formatPoints(stake) : ''}`}
+          </button>
+        </div>
       </div>
 
-      <div className="bet-summary" aria-live="polite">
+      <div className="bet-summary table-bet-summary" aria-live="polite">
         <span>
-          本局投注 <strong>{formatPoints(stake)}</strong>
+          本局筹码 <strong>{formatPoints(stake)}</strong>
         </span>
         <span>
-          可用余额 <strong>{formatPoints(balance - stake)}</strong>
+          下注后可用 <strong>{formatPoints(balance - stake)}</strong>
         </span>
+        <small>点击筹码，再点击桌面下注区</small>
       </div>
 
-      {error && <p className="form-error">{error}</p>}
-
-      <div className="bet-actions">
-        <button className="secondary-button" onClick={onClear} disabled={isDealing || stake === 0}>
-          <Trash2 size={16} />
-          清空
-        </button>
-        <button
-          className="secondary-button"
-          onClick={onRepeat}
-          disabled={isDealing || !hasLastBets}
-        >
-          <RotateCcw size={16} />
-          重复
-        </button>
-        <button className="fly-button" onClick={onFly} disabled={isDealing}>
-          <Eye size={18} />
-          {dealingMode === 'fly' ? '飞牌进行中' : '飞牌 · 自动开牌'}
-        </button>
-        <button
-          className="deal-button"
-          onClick={onDeal}
-          disabled={isDealing || stake === 0}
-        >
-          <CircleDollarSign size={19} />
-          {dealingMode === 'bet' ? '下注已锁定 · 翻下注侧' : '锁定下注并发牌'}
-        </button>
-      </div>
-
-      <p className="limit-note">
-        下注局只需翻开下注触达的一侧，另一侧由荷官自动翻开；和注涉及双方。“飞牌”会零下注自动开牌。
-        练习桌限额：庄/闲 10–10,000 · 和/对子 10–1,000。教学分不可购买、兑换或提现。
-      </p>
+      {error && <p className="form-error table-form-error">{error}</p>}
     </aside>
   )
 }

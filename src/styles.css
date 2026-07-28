@@ -2877,6 +2877,1244 @@ footer p {
   }
 }
 
+/* First-person casino table */
+.casino-main {
+  padding: 0;
+}
+
+.immersive-game-section {
+  width: min(100%, 1600px);
+  max-width: none;
+  margin: 0 auto;
+  padding: clamp(12px, 1.5vw, 22px) clamp(12px, 2.2vw, 34px) 0;
+}
+
+.casino-table-hud {
+  position: relative;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(76px, 0.55fr)) minmax(300px, 2.2fr) auto;
+  min-height: 54px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(20, 38, 33, 0.98), rgba(7, 20, 17, 0.98));
+  border: 1px solid rgba(225, 195, 121, 0.32);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+}
+
+.casino-table-hud > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+  min-width: 0;
+  padding: 8px 13px;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.casino-table-hud > div > span {
+  color: #7f918b;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.casino-table-hud > div > strong {
+  overflow: hidden;
+  color: #e9ddbb;
+  font-family: "Cormorant Garamond", "Noto Sans SC Variable", serif;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.casino-table-hud .mini-road-screen {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.mini-road-screen > div {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.mini-road-screen small {
+  color: #657770;
+  font-size: 9px;
+}
+
+.mini-result {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+  background: rgba(4, 14, 12, 0.78);
+  border: 2px solid;
+  border-radius: 50%;
+}
+
+.mini-result-banker {
+  color: #ff8a8c;
+  border-color: #d84a4d;
+}
+
+.mini-result-player {
+  color: #8ebaff;
+  border-color: #3e82e4;
+}
+
+.mini-result-tie {
+  color: #69dcb4;
+  border-color: #27a97f;
+}
+
+.casino-table-hud .table-status-live {
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  color: #9fb0aa;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  white-space: nowrap;
+  border-right: 0;
+}
+
+.casino-view {
+  display: block;
+  background: #06251c;
+  border-color: rgba(225, 195, 121, 0.32);
+  border-radius: 0 0 18px 18px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.42);
+}
+
+.casino-table-stage {
+  position: relative;
+  display: flex;
+  min-height: calc(100svh - 150px);
+  padding: 13px clamp(14px, 2.4vw, 38px) 12px;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: #073325;
+  background-image:
+    linear-gradient(180deg, rgba(2, 8, 7, 0.08) 0%, rgba(3, 21, 15, 0.02) 26%, rgba(3, 36, 25, 0.18) 51%, rgba(3, 34, 24, 0.74) 100%),
+    url("/assets/casino-dealer-scene-desktop-v1.webp");
+  background-repeat: no-repeat;
+  background-position: center top;
+  background-size: cover;
+  border: 0;
+  border-radius: 0 0 17px 17px;
+  isolation: isolate;
+}
+
+.casino-table-stage::before {
+  inset: 10px;
+  z-index: 1;
+  border-color: rgba(242, 216, 150, 0.25);
+  border-radius: 42% 42% 15px 15px / 22% 22% 15px 15px;
+  box-shadow:
+    inset 0 0 90px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.casino-table-stage::after {
+  display: none;
+}
+
+.casino-table-stage .felt-pattern {
+  z-index: 0;
+  opacity: 0.12;
+  mix-blend-mode: soft-light;
+}
+
+.casino-scene-vignette {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(2, 10, 8, 0.47), transparent 17%, transparent 83%, rgba(2, 10, 8, 0.47)),
+    radial-gradient(ellipse at 50% 42%, transparent 40%, rgba(2, 12, 9, 0.34) 100%);
+}
+
+.dealer-call-panel {
+  z-index: 5;
+  min-height: 58px;
+  padding: 9px 13px;
+  background: linear-gradient(90deg, rgba(4, 18, 14, 0.84), rgba(4, 18, 14, 0.5) 55%, rgba(4, 18, 14, 0.8));
+  border: 1px solid rgba(242, 216, 150, 0.2);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(8px);
+}
+
+.dealer-call-panel .eyebrow {
+  margin-bottom: 2px;
+  color: #b6a974;
+  font-size: 8px;
+}
+
+.dealer-call-panel h2 {
+  font-size: clamp(22px, 2vw, 29px);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.65);
+}
+
+.dealer-sightline {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  height: clamp(94px, 14vh, 148px);
+  flex: 0 0 auto;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.dealer-sightline > span {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  margin-bottom: 7px;
+  padding: 5px 10px;
+  color: #d9d7cf;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  background: rgba(3, 15, 12, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  box-shadow: 0 5px 17px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(7px);
+}
+
+.dealer-sightline > span i {
+  width: 6px;
+  height: 6px;
+  background: #42c99a;
+  border-radius: 50%;
+  box-shadow: 0 0 9px rgba(66, 201, 154, 0.76);
+}
+
+.dealer-sightline > span strong {
+  color: #b5c2bd;
+  font-size: 8px;
+  font-weight: 500;
+}
+
+.first-person-hands {
+  z-index: 4;
+  width: min(100%, 920px);
+  min-height: 183px;
+  margin: 0 auto;
+  gap: clamp(8px, 2.8vw, 34px);
+  align-items: stretch;
+}
+
+.first-person-hands .hand {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 12px 3px;
+  background:
+    linear-gradient(180deg, rgba(6, 43, 31, 0.18), rgba(3, 25, 18, 0.52));
+  border: 1px solid rgba(236, 213, 148, 0.18);
+  border-radius: 48% 48% 12px 12px / 18% 18% 12px 12px;
+  box-shadow:
+    inset 0 0 36px rgba(255, 255, 255, 0.018),
+    0 13px 28px rgba(0, 0, 0, 0.12);
+}
+
+.first-person-hands .hand-label {
+  position: relative;
+  z-index: 4;
+  padding: 0 6px 5px;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+.first-person-hands .hand-label > span {
+  font-size: 17px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.first-person-hands .hand-label strong {
+  font-size: 25px;
+}
+
+.first-person-hands .cards-row {
+  min-height: 133px;
+  padding: 8px 3px 1px;
+}
+
+.first-person-hands .playing-card,
+.first-person-hands .card-back,
+.first-person-hands .reveal-card {
+  width: clamp(66px, 5.7vw, 88px);
+}
+
+.first-person-hands .versus-mark {
+  align-self: center;
+  width: 42px;
+  height: 42px;
+  font-size: 12px;
+  background: rgba(3, 19, 14, 0.72);
+}
+
+.dealer-spoken-status {
+  z-index: 5;
+  width: min(96%, 760px);
+  min-height: 25px;
+  margin: 3px auto 7px;
+  padding: 4px 12px;
+  color: #dce7e3;
+  font-size: 10px;
+  background: rgba(3, 17, 13, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.casino-table-stage.is-dealing-cards .reveal-card {
+  animation: first-person-deal 620ms cubic-bezier(0.18, 0.82, 0.2, 1.08) both;
+  animation-delay: calc(var(--deal-index) * 175ms);
+}
+
+.casino-table-stage.is-dealing-cards .reveal-card-inner {
+  filter: drop-shadow(0 13px 15px rgba(0, 0, 0, 0.28));
+}
+
+.casino-betting-layer {
+  position: relative;
+  z-index: 6;
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  padding: 8px 12px 7px;
+  background:
+    linear-gradient(180deg, rgba(4, 44, 31, 0.56), rgba(2, 28, 20, 0.86));
+  border: 1px solid rgba(239, 215, 143, 0.28);
+  border-radius: 50% 50% 12px 12px / 14% 14% 12px 12px;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.05),
+    0 18px 34px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(5px);
+}
+
+.felt-betting-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 31px;
+  padding: 0 6px 5px;
+}
+
+.felt-betting-heading > div:first-child {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.felt-betting-heading p {
+  margin: 0;
+  color: #ddd4b8;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+}
+
+.dealer-call-dot {
+  width: 6px;
+  height: 6px;
+  background: #e4c775;
+  border-radius: 50%;
+  box-shadow: 0 0 9px rgba(228, 199, 117, 0.72);
+}
+
+.table-credit {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.table-credit span {
+  color: #859b91;
+  font-size: 8px;
+  letter-spacing: 0.07em;
+}
+
+.table-credit strong {
+  color: #f1db99;
+  font-family: "Cormorant Garamond", "Noto Sans SC Variable", serif;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.casino-betting-layer .felt-bet-grid {
+  display: grid;
+  grid-template-areas:
+    "playerPair empty bankerPair"
+    "player tie banker";
+  grid-template-columns: 1fr 0.72fr 1fr;
+  grid-template-rows: 43px 69px;
+  gap: 5px;
+}
+
+.casino-betting-layer .bet-player-pair {
+  grid-area: playerPair;
+}
+
+.casino-betting-layer .bet-banker-pair {
+  grid-area: bankerPair;
+}
+
+.casino-betting-layer .bet-player {
+  grid-area: player;
+}
+
+.casino-betting-layer .bet-tie {
+  grid-area: tie;
+}
+
+.casino-betting-layer .bet-banker {
+  grid-area: banker;
+}
+
+.casino-betting-layer .bet-zone {
+  grid-column: auto;
+  min-height: 0;
+  padding: 4px 7px;
+  overflow: visible;
+  color: rgba(239, 244, 241, 0.86);
+  background: rgba(3, 26, 19, 0.26);
+  border: 1px solid rgba(235, 228, 206, 0.34);
+  border-radius: 46% 46% 9px 9px / 27% 27% 9px 9px;
+  box-shadow:
+    inset 0 0 19px rgba(0, 0, 0, 0.1),
+    0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.casino-betting-layer .bet-zone:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow:
+    inset 0 0 22px rgba(255, 255, 255, 0.025),
+    0 8px 18px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+.casino-betting-layer .bet-zone:disabled {
+  opacity: 0.7;
+}
+
+.casino-betting-layer .bet-player,
+.casino-betting-layer .bet-player-pair {
+  border-color: rgba(94, 158, 255, 0.52);
+  background: linear-gradient(180deg, rgba(40, 103, 193, 0.13), rgba(3, 26, 19, 0.27));
+}
+
+.casino-betting-layer .bet-banker,
+.casino-betting-layer .bet-banker-pair {
+  border-color: rgba(255, 107, 110, 0.5);
+  background: linear-gradient(180deg, rgba(190, 54, 60, 0.13), rgba(3, 26, 19, 0.27));
+}
+
+.casino-betting-layer .bet-tie {
+  border-color: rgba(62, 198, 151, 0.55);
+  background: linear-gradient(180deg, rgba(24, 143, 105, 0.16), rgba(3, 26, 19, 0.28));
+}
+
+.casino-betting-layer .bet-zone.has-bet {
+  background: rgba(230, 210, 148, 0.09);
+  box-shadow:
+    inset 0 0 24px rgba(241, 215, 139, 0.06),
+    0 0 0 1px rgba(241, 215, 139, 0.25);
+}
+
+.casino-betting-layer .bet-zone-label {
+  font-size: 16px;
+  line-height: 1;
+  text-shadow: 0 2px 7px rgba(0, 0, 0, 0.55);
+}
+
+.casino-betting-layer .bet-zone-label small {
+  display: inline;
+  margin-left: 5px;
+  color: rgba(214, 224, 220, 0.62);
+  font-size: 7px;
+}
+
+.casino-betting-layer .bet-zone-odds {
+  color: rgba(225, 231, 228, 0.58);
+  font-size: 8px;
+}
+
+.casino-betting-layer .table-chip-stack {
+  top: 50%;
+  right: 12%;
+  display: grid;
+  width: 43px;
+  min-width: 43px;
+  height: 43px;
+  padding: 0;
+  place-items: center;
+  color: #201a0a;
+  background: linear-gradient(145deg, #f2dc91, #a97d2e);
+  border: 2px dashed rgba(63, 43, 8, 0.6);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 242, 185, 0.35),
+    0 6px 12px rgba(0, 0, 0, 0.32);
+  transform: translateY(-50%) rotate(-5deg);
+  animation: chip-land 310ms cubic-bezier(0.2, 0.9, 0.32, 1.25) both;
+}
+
+.casino-betting-layer .table-chip-stack i {
+  position: absolute;
+  z-index: -1;
+  width: 41px;
+  height: 41px;
+  background: #b78937;
+  border: 2px dashed rgba(59, 39, 6, 0.55);
+  border-radius: 50%;
+}
+
+.casino-betting-layer .table-chip-stack i:first-child {
+  transform: translate(-2px, 4px);
+}
+
+.casino-betting-layer .table-chip-stack i:nth-child(2) {
+  transform: translate(1px, 2px);
+}
+
+.casino-betting-layer .table-chip-stack strong {
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-rail {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(260px, 1.35fr);
+  gap: 14px;
+  align-items: center;
+  margin: 7px -4px 0;
+  padding: 6px 10px;
+  background:
+    linear-gradient(180deg, rgba(34, 24, 18, 0.94), rgba(13, 10, 8, 0.97));
+  border: 1px solid rgba(219, 180, 103, 0.3);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.06),
+    0 10px 23px rgba(0, 0, 0, 0.28);
+}
+
+.rail-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.rail-actions-right {
+  justify-content: flex-end;
+}
+
+.table-tool-button,
+.table-fly-button,
+.table-deal-button {
+  display: inline-flex;
+  gap: 6px;
+  min-height: 37px;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 10px;
+  font-size: 9px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.table-fly-button {
+  color: #cbd8d3;
+  white-space: nowrap;
+}
+
+.table-deal-button {
+  min-width: 140px;
+  color: #152017;
+  background: linear-gradient(145deg, #f0db98, #ad8135);
+  border-color: #f1dd9c;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+  white-space: nowrap;
+}
+
+.chip-rack-label {
+  display: block;
+  margin-bottom: 2px;
+  color: #82796b;
+  font-size: 7px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+
+.casino-betting-layer .chip-rack {
+  gap: 6px;
+  padding: 0;
+}
+
+.casino-betting-layer .chip {
+  width: 40px;
+  height: 40px;
+  font-size: 8px;
+  box-shadow:
+    inset 0 0 0 3px rgba(8, 18, 15, 0.27),
+    0 5px 10px rgba(0, 0, 0, 0.28);
+}
+
+.casino-betting-layer .chip:hover:not(:disabled),
+.casino-betting-layer .chip.is-selected {
+  transform: translateY(-3px) scale(1.04);
+}
+
+.casino-betting-layer .table-bet-summary {
+  display: flex;
+  min-height: 23px;
+  margin-top: 5px;
+  padding: 0 6px;
+  color: #96a59f;
+  font-size: 8px;
+  background: transparent;
+  border: 0;
+}
+
+.casino-betting-layer .table-bet-summary strong {
+  margin-left: 3px;
+  color: #e8d590;
+}
+
+.casino-betting-layer .table-bet-summary small {
+  color: #697a73;
+  font-size: 8px;
+}
+
+.casino-betting-layer .table-form-error {
+  min-height: 0;
+  margin: 1px 0 0;
+  padding: 5px 8px;
+  color: #ffb0ae;
+  font-size: 9px;
+  text-align: center;
+  background: rgba(138, 29, 32, 0.22);
+  border: 1px solid rgba(255, 110, 110, 0.28);
+  border-radius: 6px;
+}
+
+.casino-rail-note {
+  z-index: 5;
+  min-height: 21px;
+  margin-top: 2px;
+}
+
+.table-companion {
+  display: grid;
+  width: min(100% - 32px, 1180px);
+  grid-template-columns: minmax(0, 1.4fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin: 18px auto 0;
+  padding: 12px 15px;
+  background: rgba(10, 27, 23, 0.84);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.compact-shoe-stats {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  min-width: 0;
+  color: #8fa099;
+  font-size: 10px;
+}
+
+.compact-shoe-stats span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.compact-shoe-stats strong {
+  color: #e2e9e6;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.compact-shoe-stats small {
+  color: #697b74;
+  font-size: 8px;
+}
+
+.compact-shoe-stats .stat-banker strong {
+  color: var(--banker-light);
+}
+
+.compact-shoe-stats .stat-player strong {
+  color: var(--player-light);
+}
+
+.compact-shoe-stats .stat-tie strong {
+  color: #56d2a6;
+}
+
+.table-detail-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.table-detail-actions button,
+.simulator-disclosure button {
+  display: inline-flex;
+  gap: 6px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 10px;
+  color: #aebdb7;
+  font-size: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.table-detail-actions button.is-active {
+  color: var(--gold-light);
+  background: rgba(217, 185, 108, 0.1);
+  border-color: rgba(217, 185, 108, 0.35);
+}
+
+.simulator-disclosure {
+  display: flex;
+  width: min(100% - 32px, 1180px);
+  gap: 12px;
+  align-items: center;
+  margin: 14px auto 54px;
+  padding: 12px 15px;
+  color: #81918b;
+  background: rgba(255, 255, 255, 0.018);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 10px;
+}
+
+.simulator-disclosure > svg {
+  flex: 0 0 auto;
+  color: var(--gold);
+}
+
+.simulator-disclosure p {
+  flex: 1;
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.65;
+}
+
+.simulator-disclosure button {
+  flex: 0 0 auto;
+}
+
+@keyframes first-person-deal {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -190px, 0) scale(0.72) rotate(-12deg);
+  }
+
+  72% {
+    opacity: 1;
+    transform: translateX(calc(var(--card-index) * -12px)) translateY(5px) rotate(calc((var(--card-index) - 1) * 1.5deg));
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(calc(var(--card-index) * -12px)) rotate(calc((var(--card-index) - 1) * 1.5deg));
+  }
+}
+
+@keyframes chip-land {
+  0% {
+    opacity: 0;
+    transform: translate(28px, -86px) scale(1.35) rotate(18deg);
+  }
+
+  70% {
+    opacity: 1;
+    transform: translateY(-44%) scale(0.94) rotate(-8deg);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1) rotate(-5deg);
+  }
+}
+
+@media (max-width: 1080px) {
+  .casino-table-hud {
+    grid-template-columns: repeat(4, minmax(66px, 0.58fr)) minmax(230px, 2fr);
+  }
+
+  .casino-table-hud .table-status-live {
+    display: none;
+  }
+
+  .player-rail {
+    grid-template-columns: minmax(140px, 0.8fr) auto minmax(220px, 1.2fr);
+    gap: 8px;
+    padding-inline: 7px;
+  }
+
+  .table-tool-button,
+  .table-fly-button,
+  .table-deal-button {
+    padding-inline: 8px;
+  }
+
+  .table-companion {
+    grid-template-columns: 1fr;
+  }
+
+  .table-detail-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    min-height: 64px;
+    grid-template-columns: 1fr auto;
+    padding: 0 12px;
+  }
+
+  .topbar nav {
+    display: none;
+  }
+
+  .topbar-status .simulation-badge {
+    display: none;
+  }
+
+  .topbar-status .outline-button {
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 0;
+  }
+
+  .topbar-status .outline-button svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+    font-size: 21px;
+  }
+
+  .brand strong {
+    font-size: 13px;
+  }
+
+  .brand small {
+    font-size: 8px;
+  }
+
+  .immersive-game-section {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .casino-table-hud {
+    grid-template-columns: repeat(4, 1fr);
+    min-height: 48px;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .casino-table-hud > div {
+    padding: 7px 5px;
+    text-align: center;
+  }
+
+  .casino-table-hud > div:nth-child(4) {
+    border-right: 0;
+  }
+
+  .casino-table-hud > div > span {
+    font-size: 7px;
+  }
+
+  .casino-table-hud > div > strong {
+    font-size: 13px;
+  }
+
+  .casino-table-hud .mini-road-screen {
+    grid-column: 1 / -1;
+    display: flex;
+    min-height: 34px;
+    gap: 8px;
+    justify-content: center;
+    padding: 5px 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-right: 0;
+  }
+
+  .mini-road-screen > div {
+    overflow: hidden;
+  }
+
+  .mini-result {
+    width: 19px;
+    height: 19px;
+    font-size: 7px;
+    border-width: 1px;
+  }
+
+  .casino-view {
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .casino-table-stage {
+    min-height: 1010px;
+    padding: 9px 8px 8px;
+    background-color: #073426;
+    background-image:
+      linear-gradient(180deg, rgba(1, 8, 6, 0.04) 0%, rgba(3, 24, 17, 0.03) 31%, rgba(3, 38, 26, 0.47) 55%, rgba(3, 31, 22, 0.88) 100%),
+      url("/assets/casino-dealer-scene-mobile-v1.webp");
+    background-position: center top;
+    background-size: 100% auto;
+    border-radius: 0;
+  }
+
+  .casino-table-stage::before {
+    inset: 5px;
+    border-radius: 42% 42% 10px 10px / 14% 14% 10px 10px;
+  }
+
+  .dealer-call-panel {
+    min-height: 56px;
+    padding: 7px 9px;
+  }
+
+  .dealer-call-panel h2 {
+    font-size: 20px;
+  }
+
+  .dealer-call-panel .round-net {
+    min-width: 90px;
+    padding: 7px 8px;
+  }
+
+  .dealer-call-panel .round-net strong {
+    font-size: 13px;
+  }
+
+  .dealer-sightline {
+    height: 274px;
+  }
+
+  .first-person-hands {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    min-height: 203px;
+    gap: 4px;
+  }
+
+  .first-person-hands .hand {
+    padding: 6px 3px 2px;
+    border-radius: 32% 32% 8px 8px / 12% 12% 8px 8px;
+  }
+
+  .first-person-hands .hand-label {
+    padding: 0 3px 5px;
+  }
+
+  .first-person-hands .hand-label > span {
+    font-size: 14px;
+  }
+
+  .first-person-hands .hand-label > span small {
+    display: none;
+  }
+
+  .first-person-hands .hand-label strong {
+    font-size: 21px;
+  }
+
+  .first-person-hands .cards-row {
+    min-height: 152px;
+    padding-top: 11px;
+  }
+
+  .first-person-hands .playing-card,
+  .first-person-hands .card-back,
+  .first-person-hands .reveal-card {
+    width: clamp(51px, 15.5vw, 64px);
+  }
+
+  .first-person-hands .versus-mark {
+    position: static;
+    width: 28px;
+    height: 28px;
+    font-size: 8px;
+    border-width: 1px;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .first-person-hands .card-corner {
+    top: 5px;
+    left: 5px;
+    font-size: 13px;
+  }
+
+  .first-person-hands .card-corner-bottom {
+    top: auto;
+    right: 5px;
+    bottom: 5px;
+    left: auto;
+  }
+
+  .first-person-hands .card-suit {
+    font-size: 27px;
+  }
+
+  .card-reveal-hand {
+    bottom: -178px;
+    width: 235px;
+  }
+
+  .dealer-spoken-status {
+    width: 98%;
+    min-height: 30px;
+    margin: 1px auto 6px;
+    padding: 5px 9px;
+    font-size: 9px;
+  }
+
+  .casino-betting-layer {
+    padding: 7px 6px 6px;
+    border-radius: 34% 34% 9px 9px / 6% 6% 9px 9px;
+  }
+
+  .felt-betting-heading {
+    min-height: 34px;
+    padding-inline: 3px;
+  }
+
+  .felt-betting-heading p {
+    max-width: 210px;
+    font-size: 8px;
+    line-height: 1.3;
+  }
+
+  .table-credit span {
+    display: none;
+  }
+
+  .table-credit strong {
+    font-size: 15px;
+  }
+
+  .casino-betting-layer .felt-bet-grid {
+    grid-template-columns: 1fr 0.8fr 1fr;
+    grid-template-rows: 44px 73px;
+    gap: 4px;
+  }
+
+  .casino-betting-layer .bet-zone {
+    padding: 3px;
+    border-radius: 35% 35% 7px 7px / 17% 17% 7px 7px;
+  }
+
+  .casino-betting-layer .bet-zone-label {
+    font-size: 14px;
+  }
+
+  .casino-betting-layer .bet-zone-label small {
+    display: none;
+  }
+
+  .casino-betting-layer .table-chip-stack {
+    right: 7%;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+  }
+
+  .casino-betting-layer .table-chip-stack i {
+    width: 34px;
+    height: 34px;
+  }
+
+  .player-rail {
+    grid-template-areas:
+      "chips chips"
+      "left right";
+    grid-template-columns: 0.7fr 1.3fr;
+    gap: 5px;
+    margin-top: 5px;
+    padding: 6px;
+  }
+
+  .player-rail > div:nth-child(2) {
+    grid-area: chips;
+  }
+
+  .rail-actions-left {
+    grid-area: left;
+  }
+
+  .rail-actions-right {
+    grid-area: right;
+  }
+
+  .casino-betting-layer .chip-rack {
+    gap: clamp(7px, 3vw, 13px);
+  }
+
+  .casino-betting-layer .chip {
+    width: 39px;
+    height: 39px;
+  }
+
+  .table-tool-button,
+  .table-fly-button,
+  .table-deal-button {
+    min-height: 36px;
+    padding: 6px 7px;
+    font-size: 8px;
+  }
+
+  .table-tool-button {
+    min-width: 37px;
+    font-size: 0;
+  }
+
+  .table-tool-button svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .table-deal-button {
+    min-width: 112px;
+  }
+
+  .casino-betting-layer .table-bet-summary {
+    min-height: 28px;
+    justify-content: space-around;
+  }
+
+  .casino-betting-layer .table-bet-summary small {
+    display: none;
+  }
+
+  .casino-rail-note {
+    min-height: 20px;
+    gap: 7px;
+    font-size: 7px;
+  }
+
+  .table-companion,
+  .simulator-disclosure {
+    width: calc(100% - 20px);
+  }
+
+  .table-companion {
+    gap: 11px;
+    margin-top: 10px;
+    padding: 10px;
+  }
+
+  .compact-shoe-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+  }
+
+  .compact-shoe-stats span {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    align-items: center;
+    padding: 6px 3px;
+    background: rgba(255, 255, 255, 0.025);
+    border-radius: 6px;
+  }
+
+  .compact-shoe-stats small {
+    display: none;
+  }
+
+  .table-detail-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .table-detail-actions button {
+    min-width: 0;
+    padding-inline: 5px;
+  }
+
+  .simulator-disclosure {
+    align-items: flex-start;
+    margin-bottom: 34px;
+  }
+
+  .simulator-disclosure button {
+    display: none;
+  }
+}
+
+@media (max-width: 390px) {
+  .casino-table-stage {
+    min-height: 990px;
+  }
+
+  .dealer-sightline {
+    height: 250px;
+  }
+
+  .casino-betting-layer .chip-rack {
+    gap: 6px;
+  }
+
+  .casino-betting-layer .chip {
+    width: 36px;
+    height: 36px;
+  }
+
+  .table-fly-button {
+    font-size: 0;
+  }
+
+  .table-fly-button svg {
+    width: 17px;
+    height: 17px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

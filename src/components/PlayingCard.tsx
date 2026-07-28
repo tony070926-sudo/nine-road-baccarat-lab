@@ -43,6 +43,7 @@ export function PlayingCard({ card, index, compact = false }: PlayingCardProps) 
 interface RevealPlayingCardProps {
   card: Card
   index: number
+  dealIndex: number
   side: 'player' | 'banker'
   faceUp: boolean
   canFlip: boolean
@@ -56,6 +57,7 @@ interface RevealPlayingCardProps {
 export function RevealPlayingCard({
   card,
   index,
+  dealIndex,
   side,
   faceUp,
   canFlip,
@@ -85,7 +87,12 @@ export function RevealPlayingCard({
       } ${isFlipping ? 'is-flipping' : ''} ${
         isAutomatic ? 'is-auto-flipping' : ''
       } ${willAutoFlip ? 'will-auto-flip' : ''}`}
-      style={{ '--card-index': index } as CSSProperties}
+      style={
+        {
+          '--card-index': index,
+          '--deal-index': dealIndex,
+        } as CSSProperties
+      }
       onClick={() => canFlip && onFlip(card.id)}
       aria-label={
         faceUp
