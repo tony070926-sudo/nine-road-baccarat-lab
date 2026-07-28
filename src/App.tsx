@@ -40,12 +40,15 @@ import {
 } from './game/storage'
 import { isFlyRound } from './game/records'
 import {
+  manualRevealSides,
   nextRevealCard,
   pendingRoundMatchesGame,
   revealIsComplete,
+  revealSideForCard,
   revealedCards,
   visibleRevealCardIds,
 } from './game/reveal'
+import type { RevealSide } from './game/reveal'
 import { cardLabel } from './game/cards'
 import type {
   Bets,
@@ -58,6 +61,7 @@ import type {
 import './styles.css'
 
 const STARTING_BALANCE = 10_000
+type RevealActor = 'user' | 'dealer'
 
 const SOURCES = [
   {
@@ -136,6 +140,15 @@ function outcomeLabel(winner: Winner): string {
   return '和局'
 }
 
+function revealSideLabel(side: RevealSide): string {
+  return side === 'player' ? '闲家' : '庄家'
+}
+
+function revealScopeLabel(sides: RevealSide[]): string {
+  if (sides.length === 1) return `只翻${revealSideLabel(sides[0])}`
+  return '翻开双方'
+}
+
 function statPercent(count: number, total: number): string {
   return total ? `${((count / total) * 100).toFixed(1)}%` : '—'
 }
@@ -193,7 +206,9 @@ interface RoundHandProps {
   visibleCardIds: Set<string>
   completedCardIds: Set<string>
   nextCardId: string | null
+  nextCardRequiresUser: boolean
   flippingCardId: string | null
+  revealActor: RevealActor | null
   pendingTotal: number | null
   onFlip: (cardId: string) => void
   onFlipComplete: (cardId: string) => void
@@ -206,7 +221,9 @@ function RoundHand({
   visibleCardIds,
   completedCardIds,
   nextCardId,
+  nextCardRequiresUser,
   flippingCardId,
+  revealActor,
   pendingTotal,
   onFlip,
   onFlipComplete,
@@ -263,8 +280,18 @@ function RoundHand({
                 index={index}
                 side={side}
                 faceUp={completedCardIds.has(card.id) || isFlipping}
-                canFlip={nextCardId === card.id && !flippingCardId}
+                canFlip={
+                  nextCardId === card.id &&
+                  nextCardRequiresUser &&
+                  !flippingCardId
+                }
                 isFlipping={isFlipping}
+                isAutomatic={isFlipping && revealActor === 'dealer'}
+                willAutoFlip={
+                  nextCardId === card.id &&
+                  !nextCardRequiresUser &&
+                  !flippingCardId
+                }
                 onFlip={onFlip}
                 onFlipComplete={onFlipComplete}
                 key={card.id}
@@ -324,13 +351,12 @@ function App() {
     initialSession.revealedCount,
   )
   const [flippingCardId, setFlippingCardId] = useState<string | null>(null)
+  const [revealActor, setRevealActor] = useState<RevealActor | null>(null)
   const [revealAnnouncement, setRevealAnnouncement] = useState(
     initialSession.pendingRound
-      ? `${
-          initialSession.pendingRound.playMode === 'fly'
-            ? '飞牌对局'
-            : '已锁定下注对局'
-        }已恢复，请继续点击亮起的牌背。`
+      ? initialSession.pendingRound.playMode === 'fly'
+        ? '飞牌对局已恢复，荷官将继续自动开牌。'
+        : '已锁定下注对局已恢复，将按下注侧继续翻牌。'
       : '请先选择下注对象与筹码，然后确认开牌。',
   )
   const [formError, setFormError] = useState<string | null>(null)
@@ -346,12 +372,17 @@ function App() {
   )
   const revealedCountRef = useRef(initialSession.revealedCount)
   const flippingCardRef = useRef<string | null>(null)
+  const revealActorRef = useRef<RevealActor | null>(null)
   const roundLockRef = useRef(Boolean(initialSession.pendingRound))
   const flipLockRef = useRef(false)
   const finalizeLockRef = useRef(false)
   const flipFallbackTimerRef = useRef<number | null>(null)
   const settleTimerRef = useRef<number | null>(null)
   const focusTimerRef = useRef<number | null>(null)
+  const autoFlipTimerRef = useRef<number | null>(null)
+  const beginRevealCardRef = useRef<
+    (cardId: string, actor: RevealActor) => void
+  >(() => undefined)
 
   const isDealing = pendingRound !== null
   const dealingMode = pendingRound?.playMode ?? null
@@ -381,6 +412,9 @@ function App() {
       }
       if (focusTimerRef.current !== null) {
         window.clearTimeout(focusTimerRef.current)
+      }
+      if (autoFlipTimerRef.current !== null) {
+        window.clearTimeout(autoFlipTimerRef.current)
       }
     },
     [],
@@ -429,6 +463,19 @@ function App() {
   const pendingNextCard = pendingRound
     ? nextRevealCard(pendingRound.result, revealedCount)
     : null
+  const pendingManualSides = useMemo(
+    () =>
+      pendingRound
+        ? manualRevealSides(pendingRound.bets, pendingRound.playMode)
+        : [],
+    [pendingRound],
+  )
+  const pendingNextSide =
+    pendingRound && pendingNextCard
+      ? revealSideForCard(pendingRound.result, pendingNextCard.id)
+      : null
+  const pendingNextRequiresUser =
+    pendingNextSide !== null && pendingManualSides.includes(pendingNextSide)
   const completedPendingCards = pendingRound
     ? revealedCards(pendingRound.result, revealedCount)
     : []
@@ -453,6 +500,7 @@ function App() {
       !pendingRound ||
       flippingCardId ||
       !pendingNextCard ||
+      !pendingNextRequiresUser ||
       rulesOpen ||
       resetOpen ||
       newShoeOpen ||
@@ -479,6 +527,7 @@ function App() {
     flippingCardId,
     newShoeOpen,
     pendingNextCard,
+    pendingNextRequiresUser,
     pendingRound,
     resetOpen,
     roadFullscreen,
@@ -524,9 +573,14 @@ function App() {
       window.clearTimeout(settleTimerRef.current)
       settleTimerRef.current = null
     }
+    if (autoFlipTimerRef.current !== null) {
+      window.clearTimeout(autoFlipTimerRef.current)
+      autoFlipTimerRef.current = null
+    }
     pendingRoundRef.current = null
     revealedCountRef.current = 0
     flippingCardRef.current = null
+    revealActorRef.current = null
     roundLockRef.current = false
     flipLockRef.current = false
     finalizeLockRef.current = false
@@ -534,6 +588,7 @@ function App() {
     setPendingRound(null)
     setRevealedCount(0)
     setFlippingCardId(null)
+    setRevealActor(null)
   }
 
   const finalizeRound = (roundId: string) => {
@@ -648,13 +703,22 @@ function App() {
       pendingRoundRef.current = pending
       revealedCountRef.current = 0
       flippingCardRef.current = null
+      revealActorRef.current = null
       flipLockRef.current = false
       finalizeLockRef.current = false
       setPendingRound(pending)
       setRevealedCount(0)
       setFlippingCardId(null)
+      setRevealActor(null)
+      const revealSides = manualRevealSides(roundBets, playMode)
       setRevealAnnouncement(
-        `${playMode === 'fly' ? '飞牌模式' : '下注已锁定'}。请按亮起顺序逐张点击牌背。`,
+        playMode === 'fly'
+          ? '飞牌进行中，本局无下注，荷官将自动开牌并写入路单。'
+          : revealSides.length === 1
+            ? `下注已锁定。本局由你翻开${revealSideLabel(
+                revealSides[0],
+              )}，另一方由荷官自动翻开。`
+            : '下注已锁定。本局下注涉及双方，请按亮起顺序翻牌。',
       )
       if (!pendingSaved) {
         setNotice('浏览器阻止本机保存；本局仍可继续，但刷新后无法恢复。')
@@ -695,11 +759,14 @@ function App() {
       flipFallbackTimerRef.current = null
     }
 
+    const completedActor = revealActorRef.current
     const nextCount = currentCount + 1
     revealedCountRef.current = nextCount
     flippingCardRef.current = null
+    revealActorRef.current = null
     setRevealedCount(nextCount)
     setFlippingCardId(null)
+    setRevealActor(null)
 
     const playerIndex = current.result.playerCards.findIndex(
       (card) => card.id === expectedCard.id,
@@ -710,7 +777,9 @@ function App() {
     const sideLabel = playerIndex >= 0 ? '闲家' : '庄家'
     const sideIndex = playerIndex >= 0 ? playerIndex : bankerIndex
     setRevealAnnouncement(
-      `${sideLabel}第 ${sideIndex + 1} 张：${cardLabel(expectedCard)}。`,
+      `${completedActor === 'dealer' ? '荷官翻开' : '你翻开'}${sideLabel}第 ${
+        sideIndex + 1
+      } 张：${cardLabel(expectedCard)}。`,
     )
 
     if (revealIsComplete(current.result, nextCount)) {
@@ -730,35 +799,107 @@ function App() {
     flipLockRef.current = false
   }
 
-  const handleRevealCard = (cardId: string) => {
+  const beginRevealCard = (cardId: string, actor: RevealActor) => {
     const current = pendingRoundRef.current
     const expectedCard = current
       ? nextRevealCard(current.result, revealedCountRef.current)
       : null
+    const expectedSide =
+      current && expectedCard
+        ? revealSideForCard(current.result, expectedCard.id)
+        : null
+    const requiresUser =
+      current && expectedSide
+        ? manualRevealSides(current.bets, current.playMode).includes(
+            expectedSide,
+          )
+        : false
 
     if (
       !current ||
       flipLockRef.current ||
       finalizeLockRef.current ||
-      expectedCard?.id !== cardId
+      expectedCard?.id !== cardId ||
+      !expectedSide ||
+      (actor === 'user') !== requiresUser
     ) {
       return
     }
 
     flipLockRef.current = true
     flippingCardRef.current = cardId
+    revealActorRef.current = actor
     setFlippingCardId(cardId)
-    setRevealAnnouncement('正在翻开扑克牌…')
+    setRevealActor(actor)
+    setRevealAnnouncement(
+      actor === 'dealer'
+        ? `荷官正在翻开${revealSideLabel(expectedSide)}牌…`
+        : `正在翻开${revealSideLabel(expectedSide)}牌…`,
+    )
     flipFallbackTimerRef.current = window.setTimeout(
       () => completeRevealCard(current.id, cardId),
       1_100,
     )
   }
 
+  useEffect(() => {
+    beginRevealCardRef.current = beginRevealCard
+  })
+
+  const handleRevealCard = (cardId: string) => {
+    beginRevealCard(cardId, 'user')
+  }
+
   const handleRevealComplete = (cardId: string) => {
     const current = pendingRoundRef.current
     if (current) completeRevealCard(current.id, cardId)
   }
+
+  useEffect(() => {
+    if (
+      !pendingRound ||
+      !pendingNextCard ||
+      pendingNextRequiresUser ||
+      flippingCardId ||
+      rulesOpen ||
+      resetOpen ||
+      newShoeOpen ||
+      roadFullscreen
+    ) {
+      return
+    }
+
+    if (autoFlipTimerRef.current !== null) {
+      window.clearTimeout(autoFlipTimerRef.current)
+    }
+    const roundId = pendingRound.id
+    const cardId = pendingNextCard.id
+    autoFlipTimerRef.current = window.setTimeout(() => {
+      const current = pendingRoundRef.current
+      const expected = current
+        ? nextRevealCard(current.result, revealedCountRef.current)
+        : null
+      if (current?.id === roundId && expected?.id === cardId) {
+        beginRevealCardRef.current(cardId, 'dealer')
+      }
+    }, 420)
+
+    return () => {
+      if (autoFlipTimerRef.current !== null) {
+        window.clearTimeout(autoFlipTimerRef.current)
+        autoFlipTimerRef.current = null
+      }
+    }
+  }, [
+    flippingCardId,
+    newShoeOpen,
+    pendingNextCard,
+    pendingNextRequiresUser,
+    pendingRound,
+    resetOpen,
+    roadFullscreen,
+    rulesOpen,
+  ])
 
   const handleDeal = () => {
     const error = validateBets(bets, game.balance)
@@ -991,8 +1132,12 @@ function App() {
                   <h2>
                     {pendingRound
                       ? flippingCardId
-                        ? '正在翻牌'
-                        : '点击牌背翻牌'
+                        ? revealActor === 'dealer'
+                          ? '荷官正在翻牌'
+                          : '正在翻牌'
+                        : pendingNextRequiresUser
+                          ? '点击下注一方牌背'
+                          : '等待荷官翻牌'
                       : settledCurrentRound
                         ? outcomeLabel(settledCurrentRound.winner)
                         : '等待开牌'}
@@ -1001,7 +1146,9 @@ function App() {
                 {pendingRound ? (
                   <div className="round-net reveal-progress">
                     <span>
-                      {pendingRound.playMode === 'fly' ? '飞牌模式' : '下注已锁定'}
+                      {pendingRound.playMode === 'fly'
+                        ? '飞牌 · 自动'
+                        : revealScopeLabel(pendingManualSides)}
                     </span>
                     <strong>
                       {revealedCount} / {revealDisplayTotal}
@@ -1039,7 +1186,9 @@ function App() {
                   visibleCardIds={visiblePendingCardIds}
                   completedCardIds={completedPendingCardIds}
                   nextCardId={pendingNextCard?.id ?? null}
+                  nextCardRequiresUser={pendingNextRequiresUser}
                   flippingCardId={flippingCardId}
+                  revealActor={revealActor}
                   pendingTotal={pendingPlayerTotal}
                   onFlip={handleRevealCard}
                   onFlipComplete={handleRevealComplete}
@@ -1056,7 +1205,9 @@ function App() {
                   visibleCardIds={visiblePendingCardIds}
                   completedCardIds={completedPendingCardIds}
                   nextCardId={pendingNextCard?.id ?? null}
+                  nextCardRequiresUser={pendingNextRequiresUser}
                   flippingCardId={flippingCardId}
+                  revealActor={revealActor}
                   pendingTotal={pendingBankerTotal}
                   onFlip={handleRevealCard}
                   onFlipComplete={handleRevealComplete}

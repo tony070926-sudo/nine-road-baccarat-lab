@@ -1039,6 +1039,12 @@ main {
   transform: translateX(-50%);
 }
 
+.reveal-card-hint.is-auto {
+  color: #c8dad3;
+  border-color: rgba(184, 211, 201, 0.3);
+  background: rgba(7, 24, 19, 0.82);
+}
+
 .card-reveal-hand {
   position: absolute;
   z-index: 16;

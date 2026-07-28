@@ -47,6 +47,8 @@ interface RevealPlayingCardProps {
   faceUp: boolean
   canFlip: boolean
   isFlipping: boolean
+  isAutomatic: boolean
+  willAutoFlip: boolean
   onFlip: (cardId: string) => void
   onFlipComplete: (cardId: string) => void
 }
@@ -58,6 +60,8 @@ export function RevealPlayingCard({
   faceUp,
   canFlip,
   isFlipping,
+  isAutomatic,
+  willAutoFlip,
   onFlip,
   onFlipComplete,
 }: RevealPlayingCardProps) {
@@ -78,12 +82,16 @@ export function RevealPlayingCard({
       type="button"
       className={`reveal-card reveal-card-${side} ${faceUp ? 'is-face-up' : ''} ${
         canFlip ? 'can-flip' : ''
-      } ${isFlipping ? 'is-flipping' : ''}`}
+      } ${isFlipping ? 'is-flipping' : ''} ${
+        isAutomatic ? 'is-auto-flipping' : ''
+      } ${willAutoFlip ? 'will-auto-flip' : ''}`}
       style={{ '--card-index': index } as CSSProperties}
       onClick={() => canFlip && onFlip(card.id)}
       aria-label={
         faceUp
           ? `${sideLabel}第 ${index + 1} 张，${cardLabel(card)}`
+          : willAutoFlip
+            ? `等待荷官翻开${sideLabel}第 ${index + 1} 张牌`
           : `翻开${sideLabel}第 ${index + 1} 张牌`
       }
       aria-disabled={!canFlip}
@@ -101,7 +109,7 @@ export function RevealPlayingCard({
         </span>
       </span>
 
-      {(canFlip || isFlipping) && (
+      {(canFlip || (isFlipping && !isAutomatic)) && (
         <img
           className={`card-reveal-hand card-reveal-hand-${side}`}
           src="/assets/card-reveal-hand-v2.webp"
@@ -114,6 +122,11 @@ export function RevealPlayingCard({
       {canFlip && !isFlipping && (
         <span className="reveal-card-hint" aria-hidden="true">
           点击翻牌
+        </span>
+      )}
+      {willAutoFlip && !isFlipping && (
+        <span className="reveal-card-hint is-auto" aria-hidden="true">
+          荷官翻牌
         </span>
       )}
     </button>

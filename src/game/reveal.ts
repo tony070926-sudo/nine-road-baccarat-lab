@@ -1,11 +1,40 @@
 import type {
+  Bets,
   Card,
   DealResult,
   PersistedGameState,
   PersistedPendingRound,
+  PlayMode,
 } from '../types'
 
 const OPENING_CARD_COUNT = 4
+export type RevealSide = 'player' | 'banker'
+
+export function revealSideForCard(
+  result: DealResult,
+  cardId: string,
+): RevealSide | null {
+  if (result.playerCards.some((card) => card.id === cardId)) return 'player'
+  if (result.bankerCards.some((card) => card.id === cardId)) return 'banker'
+  return null
+}
+
+/**
+ * A player manually opens only the side covered by their wagers. Tie covers
+ * both hands. Fly mode has no wagered side, so the dealer opens both hands.
+ */
+export function manualRevealSides(
+  bets: Bets,
+  playMode: PlayMode,
+): RevealSide[] {
+  if (playMode === 'fly') return []
+  if (bets.tie > 0) return ['player', 'banker']
+
+  const sides: RevealSide[] = []
+  if (bets.player > 0 || bets.playerPair > 0) sides.push('player')
+  if (bets.banker > 0 || bets.bankerPair > 0) sides.push('banker')
+  return sides
+}
 
 export function nextRevealCard(
   result: DealResult,

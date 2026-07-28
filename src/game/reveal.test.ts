@@ -7,9 +7,11 @@ import type {
   ShoeState,
 } from '../types'
 import {
+  manualRevealSides,
   nextRevealCard,
   pendingRoundMatchesGame,
   revealIsComplete,
+  revealSideForCard,
   revealedCards,
   visibleRevealCardIds,
 } from './reveal'
@@ -53,6 +55,91 @@ function shoe(
 }
 
 describe('manual reveal sequencing', () => {
+  it('maps wagers to only the sides the player should manually reveal', () => {
+    expect(
+      manualRevealSides(
+        {
+          player: 100,
+          banker: 0,
+          tie: 0,
+          playerPair: 0,
+          bankerPair: 0,
+        },
+        'bet',
+      ),
+    ).toEqual(['player'])
+    expect(
+      manualRevealSides(
+        {
+          player: 0,
+          banker: 0,
+          tie: 0,
+          playerPair: 0,
+          bankerPair: 100,
+        },
+        'bet',
+      ),
+    ).toEqual(['banker'])
+    expect(
+      manualRevealSides(
+        {
+          player: 100,
+          banker: 0,
+          tie: 0,
+          playerPair: 0,
+          bankerPair: 100,
+        },
+        'bet',
+      ),
+    ).toEqual(['player', 'banker'])
+  })
+
+  it('treats tie as two-sided and no-bet fly rounds as fully automatic', () => {
+    expect(
+      manualRevealSides(
+        {
+          player: 0,
+          banker: 0,
+          tie: 100,
+          playerPair: 0,
+          bankerPair: 0,
+        },
+        'bet',
+      ),
+    ).toEqual(['player', 'banker'])
+    expect(
+      manualRevealSides(
+        {
+          player: 0,
+          banker: 0,
+          tie: 0,
+          playerPair: 0,
+          bankerPair: 0,
+        },
+        'fly',
+      ),
+    ).toEqual([])
+  })
+
+  it('identifies the owner of each card in the locked deal order', () => {
+    const fourCardRound = result(['p1', 'b1', 'p2', 'b2'])
+    const bankerOnlyThirdRound = result(['p1', 'b1', 'p2', 'b2', 'b3'])
+    bankerOnlyThirdRound.playerCards = [
+      bankerOnlyThirdRound.dealOrder[0],
+      bankerOnlyThirdRound.dealOrder[2],
+    ]
+    bankerOnlyThirdRound.bankerCards = [
+      bankerOnlyThirdRound.dealOrder[1],
+      bankerOnlyThirdRound.dealOrder[3],
+      bankerOnlyThirdRound.dealOrder[4],
+    ]
+
+    expect(revealSideForCard(fourCardRound, 'p1')).toBe('player')
+    expect(revealSideForCard(fourCardRound, 'b2')).toBe('banker')
+    expect(revealSideForCard(bankerOnlyThirdRound, 'b3')).toBe('banker')
+    expect(revealSideForCard(fourCardRound, 'missing')).toBeNull()
+  })
+
   it('keeps third cards hidden until all four opening cards are revealed', () => {
     const sixCardRound = result(['p1', 'b1', 'p2', 'b2', 'p3', 'b3'])
 
