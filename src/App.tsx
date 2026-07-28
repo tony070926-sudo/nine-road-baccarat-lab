@@ -6,12 +6,16 @@ import {
   History,
   RefreshCw,
   ShieldCheck,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
+import { casinoAudio, loadAudioPreference } from './audio/casinoAudio'
 import { BettingPanel } from './components/BettingPanel'
 import {
   CrowdCheerOverlay,
   type ActiveCrowdCheer,
 } from './components/CrowdCheerOverlay'
+import { DealerArmBridge } from './components/DealerArmBridge'
 import { HistoryTable } from './components/HistoryTable'
 import { PlayingCard, RevealPlayingCard } from './components/PlayingCard'
 import { DealerRoadPanel, RoadBoard } from './components/RoadBoard'
@@ -400,6 +404,7 @@ function App() {
       : { ...EMPTY_BETS },
   )
   const [selectedChip, setSelectedChip] = useState(100)
+  const [audioEnabled, setAudioEnabled] = useState(loadAudioPreference)
   const [pendingRound, setPendingRound] = useState<PendingRound | null>(
     initialSession.pendingRound,
   )
@@ -474,6 +479,8 @@ function App() {
   const crowdCheerTimerRef = useRef<number | null>(null)
   const outcomeCheerTimerRef = useRef<number | null>(null)
   const crowdCheerSequenceRef = useRef(0)
+  const audioEventSequenceRef = useRef(0)
+  const tableStageRef = useRef<HTMLElement>(null)
   const beginRevealCardRef = useRef<
     (cardId: string, actor: RevealActor) => void
   >(() => undefined)
@@ -484,6 +491,19 @@ function App() {
   useEffect(() => {
     saveGameState(game)
   }, [game])
+
+  useEffect(() => {
+    casinoAudio.setEnabled(audioEnabled)
+  }, [audioEnabled])
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      void casinoAudio.setPageVisible(!document.hidden)
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () =>
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
 
   useEffect(() => {
     document.body.classList.toggle('road-fullscreen-active', roadFullscreen)
@@ -601,6 +621,24 @@ function App() {
     revealedBankerCards.length > 0 ? handTotal(revealedBankerCards) : null
   const revealDisplayTotal = pendingRound ? visiblePendingCardIds.size : 0
 
+  const nextAudioEventId = (label: string) => {
+    audioEventSequenceRef.current += 1
+    return `${label}:${audioEventSequenceRef.current}`
+  }
+
+  const handleAudioToggle = () => {
+    const nextEnabled = !audioEnabled
+    setAudioEnabled(nextEnabled)
+    casinoAudio.setEnabled(nextEnabled)
+    if (nextEnabled) {
+      void casinoAudio.unlock().then((ready) => {
+        if (!ready) {
+          setNotice('浏览器暂时无法启用牌桌音效；牌局仍可正常进行。')
+        }
+      })
+    }
+  }
+
   const clearCrowdCheer = () => {
     if (crowdCheerTimerRef.current !== null) {
       window.clearTimeout(crowdCheerTimerRef.current)
@@ -625,6 +663,7 @@ function App() {
     crowdCheerSequenceRef.current += 1
     const id = `${eventId}:${crowdCheerSequenceRef.current}`
     setActiveCrowdCheer({ id, ...cheer })
+    casinoAudio.playCrowd(`${id}:sound`, cheer.tone, cheer.side)
     crowdCheerTimerRef.current = window.setTimeout(() => {
       crowdCheerTimerRef.current = null
       setActiveCrowdCheer((current) => (current?.id === id ? null : current))
@@ -690,6 +729,14 @@ function App() {
       return
     }
     setBets(candidate)
+    casinoAudio.playChip(
+      nextAudioEventId(`bet:${target}`),
+      target === 'player'
+        ? 'player'
+        : target === 'banker'
+          ? 'banker'
+          : 'center',
+    )
   }
 
   const handleRepeat = () => {
@@ -700,6 +747,7 @@ function App() {
     }
     setBets({ ...game.lastBets })
     setFormError(null)
+    casinoAudio.playChip(nextAudioEventId('repeat-bets'), 'center')
   }
 
   const clearDealTimers = () => {
@@ -758,6 +806,12 @@ function App() {
         side ? revealSideLabel(side) : ''
       }第 ${sideIndex + 1} 张牌…`,
     )
+    if (side) {
+      casinoAudio.playDealStart(
+        `${roundId}:deal:${motion.sequence}:start`,
+        side,
+      )
+    }
 
     dealPhaseTimerRef.current = window.setTimeout(
       () => completeDealMotion(motion),
@@ -771,6 +825,14 @@ function App() {
     clearDealTimers()
     const current = pendingRoundRef.current
     if (!current || current.id !== signal.roundId) return
+
+    const dealtSide = revealSideForCard(current.result, signal.cardId)
+    if (dealtSide) {
+      casinoAudio.playCardLand(
+        `${signal.roundId}:deal:${signal.sequence}:land`,
+        dealtSide,
+      )
+    }
 
     const nextDealtIds = new Set(dealtCardIdsRef.current)
     nextDealtIds.add(signal.cardId)
@@ -928,6 +990,12 @@ function App() {
     gameRef.current = nextGame
     setGame(nextGame)
     setBets({ ...EMPTY_BETS })
+    casinoAudio.playSettlement(
+      `${current.id}:settlement`,
+      current.result.winner,
+      settlement.net,
+      current.playMode === 'fly',
+    )
     setRevealAnnouncement(
       `本局${outcomeLabel(current.result.winner)}，净输赢${
         settlement.net > 0 ? `正 ${formatNumber(settlement.net)}` : formatNumber(settlement.net)
@@ -983,6 +1051,7 @@ function App() {
         shoeAfter,
         result,
       }
+      casinoAudio.playRoundOpen(`${pending.id}:round-open`)
 
       if (currentGame.shoe.needsShuffle) {
         const activeGame = { ...currentGame, shoe: activeShoe }
@@ -1081,6 +1150,10 @@ function App() {
         sideIndex + 1
       } 张：${cardLabel(expectedCard)}。`,
     )
+    casinoAudio.playRevealComplete(
+      `${current.id}:reveal:${expectedCard.id}:complete`,
+      revealedSide,
+    )
 
     const playerRevealedThisCard =
       completedActor === 'user' &&
@@ -1129,6 +1202,7 @@ function App() {
       [...dealtCardIdsRef.current],
     )
     if (newlyVisibleCards.length > 0) {
+      casinoAudio.playRoundOpen(`${current.id}:third-card-cue`)
       startDealSequence(
         current,
         newlyVisibleCards,
@@ -1174,6 +1248,11 @@ function App() {
     revealActorRef.current = actor
     setFlippingCardId(cardId)
     setRevealActor(actor)
+    casinoAudio.playRevealStart(
+      `${current.id}:reveal:${cardId}:start`,
+      expectedSide,
+      actor === 'dealer',
+    )
     if (actor === 'user' && current.playMode === 'bet') {
       const publicCards = revealedCards(
         current.result,
@@ -1309,6 +1388,7 @@ function App() {
     setGame(nextGame)
     setBets({ ...EMPTY_BETS })
     setNewShoeOpen(false)
+    casinoAudio.playNewShoe(nextAudioEventId('new-shoe'))
     setRevealAnnouncement('新牌靴已就绪，请选择下注对象与筹码。')
     setNotice(`已手动开启新牌靴 ${shoe.id.slice(-8)}；既有记录仍保留。`)
   }
@@ -1450,9 +1530,12 @@ function App() {
 
           <div className="game-layout casino-view">
             <section
+              ref={tableStageRef}
               className={`table-stage casino-table-stage ${
                 pendingRound ? 'is-revealing' : ''
-              } ${pendingRound && !roundReady ? 'is-dealing-cards' : ''}`}
+              } ${pendingRound && !roundReady ? 'is-dealing-cards' : ''} ${
+                activeDealMotion ? 'is-dealing-card' : ''
+              }`}
             >
               <div className="felt-pattern" />
               <img
@@ -1462,15 +1545,42 @@ function App() {
                 aria-hidden="true"
                 fetchPriority="high"
               />
+              <div className="dealer-clean-plate" aria-hidden="true" />
               <div className="casino-scene-vignette" aria-hidden="true" />
               <div
                 className="dealer-shoe-motion-anchor"
                 data-dealer-shoe-anchor
                 aria-hidden="true"
               />
-              <div className="table-simulation-corner">
-                <span aria-hidden="true">九</span>
-                <strong>纯模拟 · 无真钱</strong>
+              <DealerArmBridge
+                key={activeDealMotion?.sequence ?? 'dealer-idle'}
+                motion={activeDealMotion}
+                stageRef={tableStageRef}
+              />
+              <div className="table-corner-controls">
+                <button
+                  type="button"
+                  className={`table-audio-toggle ${
+                    audioEnabled ? 'is-enabled' : ''
+                  }`}
+                  onClick={handleAudioToggle}
+                  aria-pressed={audioEnabled}
+                  aria-label={
+                    audioEnabled ? '关闭牌桌空间音效' : '开启牌桌空间音效'
+                  }
+                >
+                  {audioEnabled ? (
+                    <Volume2 size={16} aria-hidden="true" />
+                  ) : (
+                    <VolumeX size={16} aria-hidden="true" />
+                  )}
+                  <span>现场音效</span>
+                  <strong>{audioEnabled ? '开' : '关'}</strong>
+                </button>
+                <div className="table-simulation-corner">
+                  <span aria-hidden="true">九</span>
+                  <strong>纯模拟 · 无真钱</strong>
+                </div>
               </div>
 
               <div className="table-stage-heading dealer-call-panel">

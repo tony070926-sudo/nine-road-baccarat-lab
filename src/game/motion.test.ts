@@ -5,6 +5,7 @@ import {
   isMatchingDealMotion,
   motionFallbackMs,
   newlyVisibleUndealtCardIds,
+  squeezeVisualFrame,
   type DealMotionToken,
 } from './motion'
 
@@ -87,27 +88,25 @@ describe('motion fallback timing', () => {
 
 describe('direct drag reveal metrics', () => {
   it('tracks pointer travel continuously and clamps the result', () => {
-    expect(
-      dragRevealMetrics({
-        startX: 10,
-        startY: 100,
-        currentX: 10,
-        currentY: 55,
-        cardHeight: 100,
-      }),
-    ).toMatchObject({
-      progress: 0.5,
-      tilt: 0,
-      requiredDistance: 90,
+    const vertical = dragRevealMetrics({
+      startX: 10,
+      startY: 100,
+      currentX: 10,
+      currentY: 55,
+      cardHeight: 100,
+      corner: 'right',
     })
+    expect(vertical.progress).toBeCloseTo(0.35, 2)
+    expect(vertical.requiredDistance).toBe(90)
 
     expect(
       dragRevealMetrics({
         startX: 0,
         startY: 0,
         currentX: 400,
-        currentY: 400,
+        currentY: -400,
         cardHeight: 100,
+        corner: 'left',
       }).progress,
     ).toBe(1)
   })
@@ -116,14 +115,28 @@ describe('direct drag reveal metrics', () => {
     const metrics = dragRevealMetrics({
       startX: 100,
       startY: 100,
-      currentX: 180,
-      currentY: 100,
+      currentX: 40,
+      currentY: 50,
       cardHeight: 100,
+      corner: 'right',
     })
 
-    expect(metrics.progress).toBeCloseTo(0.64)
-    expect(metrics.tilt).toBeGreaterThan(0)
+    expect(metrics.progress).toBeGreaterThan(0.75)
+    expect(Math.abs(metrics.tilt)).toBeLessThanOrEqual(3)
     expect(metrics.progress).toBeGreaterThan(DRAG_REVEAL_COMMIT_PROGRESS)
+  })
+
+  it('rejects dragging a squeezed corner down or away from the card', () => {
+    expect(
+      dragRevealMetrics({
+        startX: 100,
+        startY: 100,
+        currentX: 150,
+        currentY: 150,
+        cardHeight: 100,
+        corner: 'right',
+      }).progress,
+    ).toBe(0)
   })
 
   it('keeps the required travel usable on small and large cards', () => {
@@ -145,5 +158,21 @@ describe('direct drag reveal metrics', () => {
         cardHeight: 300,
       }).requiredDistance,
     ).toBe(116)
+  })
+})
+
+describe('local card-curl visuals', () => {
+  it('reveals only a bounded corner before the final full-card flip', () => {
+    expect(squeezeVisualFrame(0)).toEqual({
+      peekPercent: 0,
+      curlAngle: 0,
+      lift: -0,
+      scale: 1,
+    })
+    const committed = squeezeVisualFrame(DRAG_REVEAL_COMMIT_PROGRESS)
+    expect(committed.peekPercent).toBeLessThan(42)
+    expect(committed.curlAngle).toBeLessThan(68)
+    expect(committed.lift).toBeGreaterThanOrEqual(-4)
+    expect(squeezeVisualFrame(2).peekPercent).toBe(42)
   })
 })
