@@ -71,10 +71,31 @@ export async function runReleasePreflight(targetName) {
       `Wrangler is not authenticated to the required Cloudflare account ${cloudflareAccountId}.`,
     )
   }
-  const pagesProject = await fetchPagesProjectMetadata({
+  const pagesProjectLookup = {
     accountIds: [cloudflareAccountId],
     projectName: pagesProjectName,
-  })
+  }
+  let pagesProject
+  try {
+    pagesProject = await fetchPagesProjectMetadata(pagesProjectLookup)
+  } catch (error) {
+    const usesExplicitMetadataToken = Boolean(
+      process.env.CLOUDFLARE_PAGES_READ_TOKEN ||
+      process.env.CLOUDFLARE_API_TOKEN ||
+      process.env.CF_API_TOKEN,
+    )
+    const oauthExpiredBetweenChecks =
+      !usesExplicitMetadataToken &&
+      error instanceof Error &&
+      error.message.includes('HTTP 401')
+    if (!oauthExpiredBetweenChecks) throw error
+
+    // A default OAuth token can expire in the seconds between the Wrangler
+    // account check and the direct Pages metadata read. Refresh once, then
+    // retry fail-closed; explicit API tokens are never retried this way.
+    runWrangler(['whoami', '--json'], { capture: true })
+    pagesProject = await fetchPagesProjectMetadata(pagesProjectLookup)
+  }
   if (pagesProject.productionBranch !== releaseTargets.production.branch) {
     throw new Error(
       `Pages production_branch is ${pagesProject.productionBranch}; expected ${releaseTargets.production.branch}. Deployment is blocked before migrations.`,
