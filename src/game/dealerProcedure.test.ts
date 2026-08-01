@@ -4,6 +4,7 @@ import {
   buildDealerProcedurePlan,
   type DealerProcedurePlan,
   type DealerProcedureSettlementState,
+  type DealerProcedureStepId,
   type DealerProcedureStepKind,
 } from './dealerProcedure'
 
@@ -63,80 +64,107 @@ function bothDrawResult(): DealResult {
   })
 }
 
+function playerDrawsBankerStandsResult(): DealResult {
+  return result({
+    player: [card('p1', '2'), card('p2', '3'), card('p3', '4')],
+    banker: [card('b1', '4'), card('b2', '3')],
+    winner: 'player',
+    playerTotal: 9,
+    bankerTotal: 7,
+  })
+}
+
+function playerStandsBankerDrawsResult(): DealResult {
+  return result({
+    player: [card('p1', '3'), card('p2', '3')],
+    banker: [card('b1', '2'), card('b2', '2'), card('b3', '3')],
+    winner: 'banker',
+    playerTotal: 6,
+    bankerTotal: 7,
+  })
+}
+
 function kinds(plan: DealerProcedurePlan): DealerProcedureStepKind[] {
   return plan.steps.map((step) => step.kind)
 }
 
-function activeKind(plan: DealerProcedurePlan): DealerProcedureStepKind {
-  const active = plan.steps.find((step) => step.status === 'active')
-  if (!active) throw new Error('Expected one active dealer procedure step')
-  return active.kind
+function activeId(plan: DealerProcedurePlan): DealerProcedureStepId {
+  const active = plan.steps.filter((step) => step.status === 'active')
+  expect(active).toHaveLength(1)
+  expect(active[0].id).toBe(plan.activeStepId)
+  return active[0].id
 }
 
 describe('buildDealerProcedurePlan', () => {
-  it('opens with betting when no round has been prepared', () => {
-    expect(buildDealerProcedurePlan({ round: null })).toEqual({
-      steps: [
-        {
-          id: 'place-bets',
-          kind: 'place-bets',
-          status: 'active',
-        },
-      ],
-      activeStepId: 'place-bets',
-      revealedCount: 0,
-      revealComplete: false,
-    })
-  })
+  it('defaults to a conservative generic betting plan without a prepared round', () => {
+    const plan = buildDealerProcedurePlan({ round: null })
 
-  it('models a natural after the P/B/P/B opening deal without third-card steps', () => {
-    const plan = buildDealerProcedurePlan({
-      round: { result: naturalResult(), revealedCount: 4 },
-    })
-
-    expect(kinds(plan)).toEqual([
-      'place-bets',
-      'no-more-bets',
-      'deal-opening-card',
-      'deal-opening-card',
-      'deal-opening-card',
-      'deal-opening-card',
-      'reveal-opening-hands',
-      'announce-initial-points',
-      'announce-final-result',
-      'collect-losing-wagers',
-      'pay-winning-wagers',
-      'record-road',
-      'sweep-cards-to-discard-tray',
-      'open-next-round',
-    ])
-    expect(
-      plan.steps
-        .filter((step) => step.kind === 'deal-opening-card')
-        .map((step) => [step.side, step.handCardNumber]),
-    ).toEqual([
-      ['player', 1],
-      ['banker', 1],
-      ['player', 2],
-      ['banker', 2],
-    ])
+    expect(activeId(plan)).toBe('place-bets')
+    expect(plan.presentationPhase).toBe('betting')
+    expect(plan.openingDealtCount).toBe(0)
+    expect(plan.initialPointsAnnounced).toBe(false)
+    expect(plan.revealedCount).toBe(0)
+    expect(plan.revealComplete).toBe(false)
+    expect(kinds(plan)).not.toContain('deal-player-third-card')
+    expect(kinds(plan)).not.toContain('deal-banker-third-card')
     expect(
       plan.steps.find((step) => step.id === 'announce-initial-points')
         ?.announcement,
-    ).toEqual({
-      kind: 'initial-points',
-      playerTotal: 9,
-      bankerTotal: 7,
-      natural: true,
-    })
-    expect(activeKind(plan)).toBe('announce-final-result')
+    ).toBeUndefined()
   })
 
-  it('does not disclose third-card decisions or point calls before four cards are exposed', () => {
-    const plan = buildDealerProcedurePlan({
-      round: { result: bothDrawResult(), revealedCount: 3 },
+  it('makes no-more-bets and every P/B/P/B opening card an explicit active step', () => {
+    const dealt = naturalResult()
+    expect(
+      activeId(
+        buildDealerProcedurePlan({
+          round: { result: dealt, revealedCount: 0 },
+          presentationPhase: 'no-more-bets',
+        }),
+      ),
+    ).toBe('no-more-bets')
+
+    const expectedOpeningIds: DealerProcedureStepId[] = [
+      'deal-opening-player-1',
+      'deal-opening-banker-1',
+      'deal-opening-player-2',
+      'deal-opening-banker-2',
+    ]
+    expectedOpeningIds.forEach((expectedId, openingDealtCount) => {
+      const plan = buildDealerProcedurePlan({
+        round: { result: dealt, revealedCount: 0 },
+        presentationPhase: 'dealing',
+        openingDealtCount,
+      })
+      expect(activeId(plan)).toBe(expectedId)
     })
 
+    const openingComplete = buildDealerProcedurePlan({
+      round: { result: dealt, revealedCount: 0 },
+      presentationPhase: 'dealing',
+      openingDealtCount: 4,
+    })
+    expect(activeId(openingComplete)).toBe('reveal-opening-hands')
+    expect(
+      openingComplete.steps
+        .filter((step) => step.kind === 'deal-opening-card')
+        .map((step) => [step.id, step.side, step.handCardNumber]),
+    ).toEqual([
+      ['deal-opening-player-1', 'player', 1],
+      ['deal-opening-banker-1', 'banker', 1],
+      ['deal-opening-player-2', 'player', 2],
+      ['deal-opening-banker-2', 'banker', 2],
+    ])
+  })
+
+  it('keeps opening reveal active and withholds decisions and point calls before four cards are public', () => {
+    const plan = buildDealerProcedurePlan({
+      round: { result: bothDrawResult(), revealedCount: 3 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+    })
+
+    expect(activeId(plan)).toBe('reveal-opening-hands')
     expect(kinds(plan)).not.toContain('deal-player-third-card')
     expect(kinds(plan)).not.toContain('deal-banker-third-card')
     expect(
@@ -147,92 +175,144 @@ describe('buildDealerProcedurePlan', () => {
       plan.steps.find((step) => step.id === 'announce-final-result')
         ?.announcement,
     ).toBeUndefined()
-    expect(activeKind(plan)).toBe('reveal-opening-hands')
     expect(
       plan.steps.find((step) => step.id === 'reveal-opening-hands')?.progress,
     ).toEqual({ completed: 3, total: 4 })
   })
 
-  it('advances through Player then Banker when both hands draw', () => {
+  it('holds on the initial point call until presentation explicitly completes it', () => {
     const dealt = bothDrawResult()
-    const playerDraw = buildDealerProcedurePlan({
+    const pointCall = buildDealerProcedurePlan({
       round: { result: dealt, revealedCount: 4 },
-    })
-    const bankerDraw = buildDealerProcedurePlan({
-      round: { result: dealt, revealedCount: 5 },
-    })
-    const finalCall = buildDealerProcedurePlan({
-      round: { result: dealt, revealedCount: 6 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
     })
 
-    expect(activeKind(playerDraw)).toBe('deal-player-third-card')
-    expect(activeKind(bankerDraw)).toBe('deal-banker-third-card')
-    expect(activeKind(finalCall)).toBe('announce-final-result')
+    expect(activeId(pointCall)).toBe('announce-initial-points')
+    expect(
+      pointCall.steps.find((step) => step.id === 'announce-initial-points')
+        ?.announcement,
+    ).toEqual({
+      kind: 'initial-points',
+      playerTotal: 5,
+      bankerTotal: 5,
+      natural: false,
+    })
+
+    const afterPointCall = buildDealerProcedurePlan({
+      round: { result: dealt, revealedCount: 4 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+    })
+    expect(activeId(afterPointCall)).toBe('deal-player-third-card')
+  })
+
+  it('models a natural without inventing either third-card action', () => {
+    const pointCall = buildDealerProcedurePlan({
+      round: { result: naturalResult(), revealedCount: 4 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+    })
+    const finalCall = buildDealerProcedurePlan({
+      round: { result: naturalResult(), revealedCount: 4 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+    })
+
+    expect(activeId(pointCall)).toBe('announce-initial-points')
+    expect(kinds(finalCall)).not.toContain('deal-player-third-card')
+    expect(kinds(finalCall)).not.toContain('deal-banker-third-card')
+    expect(activeId(finalCall)).toBe('announce-final-result')
     expect(
       finalCall.steps.find((step) => step.id === 'announce-final-result')
         ?.announcement,
     ).toEqual({
       kind: 'final-result',
       playerTotal: 9,
-      bankerTotal: 8,
+      bankerTotal: 7,
       winner: 'player',
     })
   })
 
-  it('includes only the Player third-card action when Banker stands', () => {
-    const dealt = result({
-      player: [card('p1', '2'), card('p2', '3'), card('p3', '4')],
-      banker: [card('b1', '4'), card('b2', '3')],
-      winner: 'player',
-      playerTotal: 9,
-      bankerTotal: 7,
-    })
-    const beforeDraw = buildDealerProcedurePlan({
+  it('does not expose the Banker decision until the Player third card is public', () => {
+    const dealt = bothDrawResult()
+    const beforePlayerThird = buildDealerProcedurePlan({
       round: { result: dealt, revealedCount: 4 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+    })
+    const afterPlayerThird = buildDealerProcedurePlan({
+      round: { result: dealt, revealedCount: 5 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+    })
+    const finalCall = buildDealerProcedurePlan({
+      round: { result: dealt, revealedCount: 6 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
     })
 
-    expect(kinds(beforeDraw)).toContain('deal-player-third-card')
-    expect(kinds(beforeDraw)).not.toContain('deal-banker-third-card')
-    expect(activeKind(beforeDraw)).toBe('deal-player-third-card')
-    expect(
-      activeKind(
-        buildDealerProcedurePlan({
-          round: { result: dealt, revealedCount: 5 },
-        }),
-      ),
-    ).toBe('announce-final-result')
+    expect(activeId(beforePlayerThird)).toBe('deal-player-third-card')
+    expect(kinds(beforePlayerThird)).not.toContain('deal-banker-third-card')
+    expect(kinds(afterPlayerThird)).toContain('deal-banker-third-card')
+    expect(activeId(afterPlayerThird)).toBe('deal-banker-third-card')
+    expect(activeId(finalCall)).toBe('announce-final-result')
   })
 
-  it('includes only the Banker third-card action when Player stands', () => {
-    const dealt = result({
-      player: [card('p1', '3'), card('p2', '3')],
-      banker: [card('b1', '2'), card('b2', '2'), card('b3', '3')],
-      winner: 'banker',
-      playerTotal: 6,
-      bankerTotal: 7,
-    })
-    const beforeDraw = buildDealerProcedurePlan({
+  it('reveals a Banker stand only after the Player third card and omits the false action', () => {
+    const dealt = playerDrawsBankerStandsResult()
+    const beforePlayerThird = buildDealerProcedurePlan({
       round: { result: dealt, revealedCount: 4 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+    })
+    const afterPlayerThird = buildDealerProcedurePlan({
+      round: { result: dealt, revealedCount: 5 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
     })
 
-    expect(kinds(beforeDraw)).not.toContain('deal-player-third-card')
-    expect(kinds(beforeDraw)).toContain('deal-banker-third-card')
-    expect(activeKind(beforeDraw)).toBe('deal-banker-third-card')
-    expect(
-      activeKind(
-        buildDealerProcedurePlan({
-          round: { result: dealt, revealedCount: 5 },
-        }),
-      ),
-    ).toBe('announce-final-result')
+    expect(activeId(beforePlayerThird)).toBe('deal-player-third-card')
+    expect(kinds(beforePlayerThird)).not.toContain('deal-banker-third-card')
+    expect(kinds(afterPlayerThird)).not.toContain('deal-banker-third-card')
+    expect(activeId(afterPlayerThird)).toBe('announce-final-result')
+  })
+
+  it('can disclose the Banker draw from opening totals when Player stands', () => {
+    const dealt = playerStandsBankerDrawsResult()
+    const beforeBankerThird = buildDealerProcedurePlan({
+      round: { result: dealt, revealedCount: 4 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+    })
+    const finalCall = buildDealerProcedurePlan({
+      round: { result: dealt, revealedCount: 5 },
+      presentationPhase: 'revealing',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+    })
+
+    expect(kinds(beforeBankerThird)).not.toContain('deal-player-third-card')
+    expect(kinds(beforeBankerThird)).toContain('deal-banker-third-card')
+    expect(activeId(beforeBankerThird)).toBe('deal-banker-third-card')
+    expect(activeId(finalCall)).toBe('announce-final-result')
   })
 
   it('orders collection, payout, road recording, discard sweep, and the next round', () => {
     const expected: Array<
       [DealerProcedureSettlementState, DealerProcedureStepKind]
     > = [
-      ['not-started', 'announce-final-result'],
+      ['not-started', 'collect-losing-wagers'],
       ['collecting-losing-wagers', 'collect-losing-wagers'],
+      ['returning-pushed-wagers', 'return-pushed-wagers'],
       ['paying-winners', 'pay-winning-wagers'],
       ['recording-road', 'record-road'],
       ['discarding-cards', 'sweep-cards-to-discard-tray'],
@@ -242,9 +322,15 @@ describe('buildDealerProcedurePlan', () => {
     for (const [settlementState, expectedKind] of expected) {
       const plan = buildDealerProcedurePlan({
         round: { result: naturalResult(), revealedCount: 4 },
+        presentationPhase: 'settling',
+        openingDealtCount: 4,
+        initialPointsAnnounced: true,
         settlementState,
+        settlementActions: ['collect', 'push', 'pay'],
       })
-      expect(activeKind(plan)).toBe(expectedKind)
+      expect(
+        plan.steps.find((step) => step.status === 'active')?.kind,
+      ).toBe(expectedKind)
       expect(plan.steps.filter((step) => step.status === 'active')).toHaveLength(
         1,
       )
@@ -252,6 +338,7 @@ describe('buildDealerProcedurePlan', () => {
 
     const complete = buildDealerProcedurePlan({
       round: { result: naturalResult(), revealedCount: 4 },
+      presentationPhase: 'settling',
       settlementState: 'complete',
     })
     expect(
@@ -259,15 +346,56 @@ describe('buildDealerProcedurePlan', () => {
         (step) => step.kind === 'sweep-cards-to-discard-tray',
       )?.status,
     ).toBe('complete')
-    expect(activeKind(complete)).toBe('open-next-round')
+    expect(activeId(complete)).toBe('open-next-round')
   })
 
-  it('keeps reveal progress authoritative and remains deterministic without mutating the result', () => {
+  it('omits wager actions that the settled round did not perform', () => {
+    const fly = buildDealerProcedurePlan({
+      round: { result: naturalResult(), revealedCount: 4 },
+      presentationPhase: 'settling',
+      initialPointsAnnounced: true,
+      settlementState: 'recording-road',
+      settlementActions: [],
+    })
+    expect(kinds(fly)).not.toContain('collect-losing-wagers')
+    expect(kinds(fly)).not.toContain('return-pushed-wagers')
+    expect(kinds(fly)).not.toContain('pay-winning-wagers')
+    expect(activeId(fly)).toBe('record-road')
+
+    const pushOnly = buildDealerProcedurePlan({
+      round: { result: naturalResult(), revealedCount: 4 },
+      presentationPhase: 'settling',
+      initialPointsAnnounced: true,
+      settlementState: 'not-started',
+      settlementActions: ['push'],
+    })
+    expect(kinds(pushOnly)).not.toContain('collect-losing-wagers')
+    expect(kinds(pushOnly)).toContain('return-pushed-wagers')
+    expect(kinds(pushOnly)).not.toContain('pay-winning-wagers')
+    expect(activeId(pushOnly)).toBe('return-pushed-wagers')
+  })
+
+  it('refuses to advance into settlement while cards remain hidden', () => {
+    const plan = buildDealerProcedurePlan({
+      round: { result: bothDrawResult(), revealedCount: 4 },
+      presentationPhase: 'settling',
+      openingDealtCount: 4,
+      initialPointsAnnounced: true,
+      settlementState: 'paying-winners',
+    })
+
+    expect(activeId(plan)).toBe('deal-player-third-card')
+    expect(kinds(plan)).not.toContain('deal-banker-third-card')
+  })
+
+  it('sanitizes progress, remains deterministic, and never mutates the result', () => {
     const dealt = bothDrawResult()
     const snapshot = structuredClone(dealt)
     const input = {
       round: { result: dealt, revealedCount: 4.9 },
-      settlementState: 'paying-winners' as const,
+      presentationPhase: 'revealing' as const,
+      openingDealtCount: Number.POSITIVE_INFINITY,
+      initialPointsAnnounced: true,
     }
 
     const first = buildDealerProcedurePlan(input)
@@ -275,7 +403,8 @@ describe('buildDealerProcedurePlan', () => {
 
     expect(first).toEqual(second)
     expect(first.revealedCount).toBe(4)
-    expect(activeKind(first)).toBe('deal-player-third-card')
+    expect(first.openingDealtCount).toBe(4)
+    expect(activeId(first)).toBe('deal-player-third-card')
     expect(dealt).toEqual(snapshot)
   })
 })

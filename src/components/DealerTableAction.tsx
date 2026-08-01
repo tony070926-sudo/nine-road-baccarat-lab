@@ -12,6 +12,7 @@ import {
   dealerSettlementContactDelay,
   dealerSettlementSteps,
   type DealerSettlementMotion,
+  type SettlementActionKind,
 } from '../game/settlementMotion'
 import {
   motionDuration,
@@ -24,11 +25,19 @@ interface DealerTableActionProps {
   motion: DealerSettlementMotion | null
   stageRef: RefObject<HTMLElement | null>
   motionProfile?: EffectiveMotionProfile
+  onStepChange?: (motionId: string, action: SettlementActionKind) => void
+  onComplete?: (motionId: string) => void
 }
 
 interface Point {
   x: number
   y: number
+}
+
+interface SettlementSequenceState {
+  motionId: string | null
+  activeStepIndex: number
+  hasStarted: boolean
 }
 
 function pointFromRect(rect: DOMRect, stageRect: DOMRect): Point {
@@ -54,10 +63,22 @@ export function DealerTableAction({
   motion,
   stageRef,
   motionProfile = 'standard',
+  onStepChange,
+  onComplete,
 }: DealerTableActionProps) {
   const actionRef = useRef<HTMLDivElement>(null)
-  const [hasStarted, setHasStarted] = useState(false)
-  const [activeStepIndex, setActiveStepIndex] = useState(0)
+  const onStepChangeRef = useRef(onStepChange)
+  const onCompleteRef = useRef(onComplete)
+  const completedMotionRef = useRef<string | null>(null)
+  const [sequence, setSequence] = useState<SettlementSequenceState>({
+    motionId: null,
+    activeStepIndex: 0,
+    hasStarted: false,
+  })
+  const motionId = motion?.id ?? null
+  const sequenceIsCurrent = motionId !== null && sequence.motionId === motionId
+  const hasStarted = sequenceIsCurrent && sequence.hasStarted
+  const activeStepIndex = sequenceIsCurrent ? sequence.activeStepIndex : 0
   const steps = useMemo(
     () => (motion ? dealerSettlementSteps(motion) : []),
     [motion],
@@ -75,14 +96,28 @@ export function DealerTableAction({
     : 0
 
   useEffect(() => {
-    if (!motion) return
+    onStepChangeRef.current = onStepChange
+    onCompleteRef.current = onComplete
+  }, [onComplete, onStepChange])
+
+  useEffect(() => {
+    completedMotionRef.current = null
+  }, [motionId])
+
+  useEffect(() => {
+    if (!motionId) return
 
     const timer = window.setTimeout(
-      () => setHasStarted(true),
+      () =>
+        setSequence((current) =>
+          current.motionId === motionId && current.hasStarted
+            ? current
+            : { motionId, activeStepIndex: 0, hasStarted: true },
+        ),
       Math.max(20, motionDuration(DEALER_SETTLEMENT_PRELUDE_MS, motionProfile)),
     )
     return () => window.clearTimeout(timer)
-  }, [motion, motionProfile])
+  }, [motionId, motionProfile])
 
   useEffect(() => {
     if (
@@ -94,7 +129,15 @@ export function DealerTableAction({
     }
 
     const timer = window.setTimeout(
-      () => setActiveStepIndex((current) => current + 1),
+      () =>
+        setSequence((current) =>
+          current.motionId === motion.id
+            ? {
+                ...current,
+                activeStepIndex: current.activeStepIndex + 1,
+              }
+            : current,
+        ),
       Math.max(20, motionDuration(DEALER_SETTLEMENT_STEP_MS, motionProfile)),
     )
     return () => window.clearTimeout(timer)
@@ -102,6 +145,8 @@ export function DealerTableAction({
 
   useEffect(() => {
     if (!motion || !activeStep) return
+
+    onStepChangeRef.current?.(motion.id, activeStep.kind)
 
     const side =
       activeStep.target === 'player' || activeStep.target === 'playerPair'
@@ -123,6 +168,24 @@ export function DealerTableAction({
       ),
     )
   }, [activeStep, activeStepIndex, motion, motionProfile])
+
+  useEffect(() => {
+    if (
+      !motion ||
+      !activeStep ||
+      activeStepIndex !== steps.length - 1 ||
+      completedMotionRef.current === motion.id
+    ) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      if (completedMotionRef.current === motion.id) return
+      completedMotionRef.current = motion.id
+      onCompleteRef.current?.(motion.id)
+    }, Math.max(20, motionDuration(DEALER_SETTLEMENT_STEP_MS, motionProfile)))
+    return () => window.clearTimeout(timer)
+  }, [activeStep, activeStepIndex, motion, motionProfile, steps.length])
 
   useLayoutEffect(() => {
     if (!motion || !activeStep) return

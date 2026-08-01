@@ -94,14 +94,17 @@ export async function readStoredGame(page: Page): Promise<StoredGameSnapshot> {
   )
 }
 
-export async function finishRoundWithKeyboard(page: Page): Promise<void> {
+export async function finishRoundWithKeyboard(
+  page: Page,
+  minimumHistoryLength = 1,
+): Promise<void> {
   const stage = page.locator('[data-table-phase]')
   const deadline = Date.now() + 35_000
 
   while (Date.now() < deadline) {
     const game = await readStoredGame(page)
     const pending = await readStoredPending(page)
-    if (!pending && game.historyLength > 0) {
+    if (!pending && game.historyLength >= minimumHistoryLength) {
       await expect(stage).toHaveAttribute('data-table-phase', 'betting')
       return
     }

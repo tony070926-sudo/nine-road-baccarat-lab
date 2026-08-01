@@ -1,169 +1,253 @@
+import { useEffect, useRef } from 'react'
+import type {
+  DealerProcedureAnnouncement,
+  DealerProcedurePlan,
+  DealerProcedureSide,
+  DealerProcedureStep,
+  DealerProcedureStepKind,
+  DealerProcedureStepStatus,
+} from '../game/dealerProcedure'
 import './DealerProcedureTrack.css'
 
-export type DealerProcedureStage =
-  | 'open-betting'
-  | 'close-betting'
-  | 'initial-deal'
-  | 'opening-points'
-  | 'player-third-card'
-  | 'banker-third-card'
-  | 'announce-result'
-  | 'collect-losing-bets'
-  | 'pay-winning-bets'
-  | 'record-road'
-  | 'sweep-cards'
-  | 'prepare-next-round'
-
-export interface DealerProcedureStep {
-  stage: string
+interface ProcedureCopy {
   label: string
-  detail?: string
+  detail: string
   announcement?: string
 }
 
-const STANDARD_DEALER_PROCEDURE_STEPS = [
-  {
-    stage: 'open-betting',
+const SIDE_LABELS: Readonly<Record<DealerProcedureSide, string>> = {
+  player: '闲家',
+  banker: '庄家',
+}
+
+const STEP_COPY: Readonly<
+  Record<Exclude<DealerProcedureStepKind, 'deal-opening-card'>, ProcedureCopy>
+> = {
+  'place-bets': {
     label: '请下注',
     detail: '开放本局下注',
   },
-  {
-    stage: 'close-betting',
+  'no-more-bets': {
     label: '停止下注',
     detail: '锁定本局下注区',
   },
-  {
-    stage: 'initial-deal',
-    label: '初始牌',
-    detail: '按闲、庄、闲、庄次序发牌',
+  'reveal-opening-hands': {
+    label: '公开开局手牌',
+    detail: '依牌桌程序公开双方两张手牌',
   },
-  {
-    stage: 'opening-points',
-    label: '报点',
-    detail: '宣读双方已公开点数',
+  'announce-initial-points': {
+    label: '宣读开局点数',
+    detail: '只宣读已经公开的两张牌点数',
   },
-  {
-    stage: 'player-third-card',
+  'deal-player-third-card': {
     label: '闲家补牌',
     detail: '依牌例执行闲家补牌',
   },
-  {
-    stage: 'banker-third-card',
+  'deal-banker-third-card': {
     label: '庄家补牌',
-    detail: '依第三张牌规则执行',
+    detail: '待闲家第三张公开后依牌例执行',
   },
-  {
-    stage: 'announce-result',
-    label: '开牌结果',
-    detail: '宣读庄、闲或和',
+  'announce-final-result': {
+    label: '宣读最终结果',
+    detail: '宣读双方最终点数与庄、闲或和',
   },
-  {
-    stage: 'collect-losing-bets',
+  'collect-losing-wagers': {
     label: '收取输注',
     detail: '先收取本局输注',
   },
-  {
-    stage: 'pay-winning-bets',
+  'return-pushed-wagers': {
+    label: '退回和注',
+    detail: '原额退回本局和注',
+  },
+  'pay-winning-wagers': {
     label: '支付派彩',
     detail: '再支付赢注与对子',
   },
-  {
-    stage: 'record-road',
+  'record-road': {
     label: '路单记录',
     detail: '将本局结果写入路单',
   },
-  {
-    stage: 'sweep-cards',
+  'sweep-cards-to-discard-tray': {
     label: '收牌入盒',
     detail: '牌面集中移入弃牌盒',
   },
-  {
-    stage: 'prepare-next-round',
+  'open-next-round': {
     label: '下一局准备',
     detail: '确认桌面后开放下一局',
   },
-] as const satisfies readonly (DealerProcedureStep & {
-  stage: DealerProcedureStage
-})[]
-
-type ProcedureState = 'completed' | 'current' | 'pending'
-
-export interface DealerProcedureTrackProps {
-  currentStage: string | null
-  steps?: readonly DealerProcedureStep[]
-  ariaLabel?: string
-  className?: string
 }
 
-const STATE_LABELS: Readonly<Record<ProcedureState, string>> = {
-  completed: '已完成',
-  current: '进行中',
+const STATUS_LABELS: Readonly<Record<DealerProcedureStepStatus, string>> = {
+  complete: '已完成',
+  active: '进行中',
   pending: '待进行',
 }
 
-function stateAt(index: number, currentIndex: number): ProcedureState {
-  if (currentIndex < 0 || index > currentIndex) return 'pending'
-  if (index < currentIndex) return 'completed'
-  return 'current'
+const STATUS_CLASS_NAMES: Readonly<
+  Record<DealerProcedureStepStatus, string>
+> = {
+  complete: 'completed',
+  active: 'current',
+  pending: 'pending',
+}
+
+function outcomeLabel(winner: 'player' | 'banker' | 'tie'): string {
+  if (winner === 'player') return '闲家胜'
+  if (winner === 'banker') return '庄家胜'
+  return '和局'
+}
+
+function announcementText(
+  announcement: DealerProcedureAnnouncement,
+): string {
+  const points = `闲家 ${announcement.playerTotal} 点，庄家 ${announcement.bankerTotal} 点`
+  if (announcement.kind === 'initial-points') {
+    return announcement.natural ? `${points}，天然牌` : points
+  }
+  return `${points}，${outcomeLabel(announcement.winner)}`
+}
+
+function dealerProcedureStepCopy(
+  step: DealerProcedureStep,
+): ProcedureCopy {
+  if (step.kind === 'deal-opening-card') {
+    const sideLabel = step.side ? SIDE_LABELS[step.side] : '牌桌'
+    const cardNumber = step.handCardNumber ?? 1
+    return {
+      label: `${sideLabel}第 ${cardNumber} 张`,
+      detail: '按闲、庄、闲、庄次序发牌',
+    }
+  }
+
+  const standardCopy = STEP_COPY[step.kind]
+  const announcement = step.announcement
+    ? announcementText(step.announcement)
+    : undefined
+  const revealProgress =
+    step.kind === 'reveal-opening-hands' && step.progress
+      ? `已公开 ${step.progress.completed} / ${step.progress.total} 张开局牌`
+      : undefined
+
+  return {
+    ...standardCopy,
+    detail: announcement ?? revealProgress ?? standardCopy.detail,
+    announcement,
+  }
+}
+
+// Exported for the DOM-free unit harness; production calls it only from the
+// component effect below.
+// eslint-disable-next-line react-refresh/only-export-components
+export function scrollDealerProcedureStepIntoView(
+  element: Pick<HTMLElement, 'scrollIntoView'>,
+  reducedMotion: boolean,
+): void {
+  element.scrollIntoView({
+    block: 'nearest',
+    inline: 'center',
+    behavior: reducedMotion ? 'auto' : 'smooth',
+  })
+}
+
+function reducedMotionIsPreferred(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+export interface DealerProcedureTrackProps {
+  plan: DealerProcedurePlan
+  ariaLabel?: string
+  className?: string
+  /** Opt in only when no other dealer-call live region is mounted. */
+  announceCurrentStep?: boolean
+  autoScrollCurrentStep?: boolean
 }
 
 export function DealerProcedureTrack({
-  currentStage,
-  steps = STANDARD_DEALER_PROCEDURE_STEPS,
+  plan,
   ariaLabel = '本局荷官程序',
   className = '',
+  announceCurrentStep = false,
+  autoScrollCurrentStep = true,
 }: DealerProcedureTrackProps) {
-  const currentIndex =
-    currentStage === null
-      ? -1
-      : steps.findIndex((step) => step.stage === currentStage)
-  const currentStep = currentIndex >= 0 ? steps[currentIndex] : null
+  const currentStepRef = useRef<HTMLLIElement>(null)
+  const currentIndex = plan.steps.findIndex(
+    (step) => step.id === plan.activeStepId,
+  )
+  const currentStep = currentIndex >= 0 ? plan.steps[currentIndex] : null
+  const currentCopy = currentStep ? dealerProcedureStepCopy(currentStep) : null
+
+  useEffect(() => {
+    const element = currentStepRef.current
+    if (
+      !autoScrollCurrentStep ||
+      !element ||
+      typeof element.scrollIntoView !== 'function'
+    ) {
+      return
+    }
+
+    scrollDealerProcedureStepIntoView(element, reducedMotionIsPreferred())
+  }, [autoScrollCurrentStep, plan.activeStepId])
 
   return (
     <section
       className={`dealer-procedure-track ${className}`.trim()}
       aria-label={ariaLabel}
       data-dealer-procedure-track="true"
-      data-current-stage={currentStep?.stage}
+      data-current-step-id={currentStep?.id}
       data-current-index={currentIndex >= 0 ? currentIndex : undefined}
     >
       <header className="dealer-procedure-track__header">
         <strong>荷官程序</strong>
-        <small data-current-call={currentStep?.label}>
-          {currentStep ? `当前 · ${currentStep.label}` : '等待程序开始'}
+        <small data-current-call={currentCopy?.label}>
+          {currentCopy ? `当前 · ${currentCopy.label}` : '等待程序开始'}
         </small>
       </header>
 
-      <p
-        className="dealer-procedure-track__live"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {currentStep
-          ? `荷官：${currentStep.announcement ?? currentStep.label}`
-          : ''}
-      </p>
+      {announceCurrentStep && (
+        <p
+          className="dealer-procedure-track__live"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {currentCopy
+            ? `荷官：${currentCopy.announcement ?? currentCopy.label}`
+            : ''}
+        </p>
+      )}
 
-      <ol className="dealer-procedure-track__steps" aria-label="荷官程序进度">
-        {steps.map((step, index) => {
-          const state = stateAt(index, currentIndex)
-          const statusLabel = STATE_LABELS[state]
+      <ol
+        className="dealer-procedure-track__steps"
+        aria-label="荷官程序进度"
+        tabIndex={0}
+      >
+        {plan.steps.map((step, index) => {
+          const copy = dealerProcedureStepCopy(step)
+          const statusLabel = STATUS_LABELS[step.status]
+          const statusClassName = STATUS_CLASS_NAMES[step.status]
+          const isCurrent = step.id === plan.activeStepId
 
           return (
             <li
-              className={`dealer-procedure-track__step dealer-procedure-track__step--${state}`}
-              data-procedure-stage={step.stage}
-              data-procedure-state={state}
-              aria-current={state === 'current' ? 'step' : undefined}
-              key={step.stage}
+              ref={isCurrent ? currentStepRef : undefined}
+              className={`dealer-procedure-track__step dealer-procedure-track__step--${statusClassName}`}
+              data-procedure-step-id={step.id}
+              data-procedure-kind={step.kind}
+              data-procedure-state={step.status}
+              aria-current={isCurrent ? 'step' : undefined}
+              key={step.id}
             >
               <span className="dealer-procedure-track__marker" aria-hidden="true">
-                {state === 'completed' ? '✓' : index + 1}
+                {step.status === 'complete' ? '✓' : index + 1}
               </span>
               <span className="dealer-procedure-track__copy">
-                <strong>{step.label}</strong>
-                {step.detail && <small>{step.detail}</small>}
+                <strong>{copy.label}</strong>
+                <small>{copy.detail}</small>
               </span>
               <span className="dealer-procedure-track__state">{statusLabel}</span>
             </li>

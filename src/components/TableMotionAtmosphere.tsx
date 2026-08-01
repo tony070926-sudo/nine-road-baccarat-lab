@@ -6,6 +6,7 @@ export type TableMotionPhase =
   | 'dealing'
   | 'revealing'
   | 'settling'
+  | 'clearing'
   | 'new-shoe'
 
 interface TableMotionAtmosphereProps {

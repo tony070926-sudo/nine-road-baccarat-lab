@@ -11,6 +11,13 @@
   overflow: hidden;
 }
 
+.dealer-procedure-track.table-dealer-procedure {
+  position: relative;
+  z-index: 4;
+  width: min(100%, 920px);
+  margin: 0 auto 0.6rem;
+}
+
 .dealer-procedure-track__header {
   display: flex;
   align-items: baseline;
@@ -60,6 +67,7 @@
   overscroll-behavior-inline: contain;
   scrollbar-color: rgba(217, 183, 110, 0.38) transparent;
   scrollbar-width: thin;
+  scroll-padding-inline: 0.65rem;
   scroll-snap-type: inline proximity;
 }
 
@@ -74,6 +82,7 @@
   border: 1px solid rgba(237, 224, 191, 0.13);
   border-radius: 0.6rem;
   background: rgba(255, 255, 255, 0.025);
+  scroll-margin-inline: 0.65rem;
   scroll-snap-align: center;
   transition:
     border-color 160ms ease,

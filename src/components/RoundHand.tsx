@@ -6,6 +6,8 @@ import {
   type RevealInputMethod,
 } from './PlayingCard'
 
+export type SettledCardState = 'shown' | 'sweeping' | 'cleared'
+
 interface RoundHandProps {
   side: 'player' | 'banker'
   settledRound: RoundRecord | null
@@ -20,6 +22,7 @@ interface RoundHandProps {
   flippingCardId: string | null
   revealActor: 'user' | 'dealer' | null
   pendingTotal: number | null
+  settledCardState?: SettledCardState
   onFlip: (cardId: string, inputMethod: RevealInputMethod) => void
   onFlipComplete: (cardId: string) => void
   onDealComplete: (motion: DealMotionToken) => void
@@ -39,6 +42,7 @@ export function RoundHand({
   flippingCardId,
   revealActor,
   pendingTotal,
+  settledCardState = 'shown',
   onFlip,
   onFlipComplete,
   onDealComplete,
@@ -84,6 +88,9 @@ export function RoundHand({
         isThirdCardStage ? 'is-third-card-stage' : ''
       }`}
       data-hand-phase={isThirdCardStage ? 'third-card' : 'opening'}
+      data-settled-card-state={
+        settledRound && !pendingRound ? settledCardState : undefined
+      }
     >
       <div className="hand-label">
         <span>
@@ -95,7 +102,11 @@ export function RoundHand({
         </strong>
       </div>
 
-      <div className={`cards-row ${isThirdCardStage ? 'is-third-card-stage' : ''}`}>
+      <div
+        className={`cards-row ${isThirdCardStage ? 'is-third-card-stage' : ''} ${
+          !pendingRound && settledCardState === 'cleared' ? 'is-cleared' : ''
+        }`}
+      >
         {pendingRound ? (
           visiblePendingCards.map((card, index) => {
             const isFlipping = flippingCardId === card.id
@@ -139,9 +150,19 @@ export function RoundHand({
               />
             )
           })
+        ) : settledRound && settledCardState === 'cleared' ? (
+          <span className="cards-cleared-marker" data-round-cards-cleared>
+            牌面已收入弃牌盒
+          </span>
         ) : settledRound ? (
           settledCards.map((card, index) => (
-            <PlayingCard card={card} index={index} key={card.id} />
+            <span
+              className="settled-card-motion-shell"
+              data-table-card-id={card.id}
+              key={card.id}
+            >
+              <PlayingCard card={card} index={index} />
+            </span>
           ))
         ) : (
           <>
@@ -166,6 +187,8 @@ export function RoundHand({
               ? '增牌单独观看 · 首两张已收拢'
               : `已翻 ${revealedSideCount} / ${visiblePendingCards.length}`}
           </span>
+        ) : settledRound && settledCardState === 'cleared' ? (
+          <span>桌面已清</span>
         ) : (
           <>
             {settledRound?.natural && <span>自然牌</span>}

@@ -55,6 +55,18 @@ test('completes a keyboard round without duplicate settlement @cross-browser', a
   expect(after.handNumber).toBe(before.handNumber + 1)
   expect(after.balance).toBeGreaterThanOrEqual(0)
   expect(await readStoredPending(page)).toBeNull()
+
+  await startPlayerRound(page)
+  await expect(page.locator('.cards-row.is-cleared')).toHaveCount(0)
+  await finishRoundWithKeyboard(page, before.historyLength + 2)
+  const afterSecond = await readStoredGame(page)
+  expect(afterSecond.historyLength).toBe(before.historyLength + 2)
+  expect(afterSecond.handNumber).toBe(before.handNumber + 2)
+  await expect(page.locator('[data-table-phase]')).toHaveAttribute(
+    'data-table-phase',
+    'betting',
+  )
+  await expect(page.locator('.cards-row.is-cleared')).toHaveCount(2)
   expect(runtimeErrors).toEqual([])
 })
 
