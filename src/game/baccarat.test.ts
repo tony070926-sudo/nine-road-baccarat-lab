@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Card, DealResult, Rank, ShoeState, Suit } from '../types'
 import {
   EMPTY_BETS,
@@ -48,6 +48,11 @@ function result(overrides: Partial<DealResult>): DealResult {
   }
 }
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
 describe('eight-deck shoe', () => {
   it('contains 416 unique physical cards with eight copies of each rank/suit', () => {
     const cards = createUnshuffledDeck()
@@ -74,6 +79,17 @@ describe('eight-deck shoe', () => {
     const expectedBurn = 1 + (cardPoint(shoe.burnCard) || 10)
     expect(shoe.cursor).toBe(expectedBurn)
     expect(shoe.burnedCards).toBe(expectedBurn)
+  })
+
+  it('keeps fallback shoe ids unique when randomUUID is unavailable', () => {
+    vi.stubGlobal('crypto', {})
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+
+    const first = createShoe(createSeededRandomInt(11))
+    const second = createShoe(createSeededRandomInt(12))
+    const third = createShoe(createSeededRandomInt(13))
+
+    expect(new Set([first.id, second.id, third.id])).toHaveLength(3)
   })
 })
 
@@ -149,6 +165,7 @@ describe('settlement', () => {
     )
     expect(settlement.totalReturned).toBe(195)
     expect(settlement.net).toBe(95)
+    expect(settlement.commissionCharged).toBe(5)
   })
 
   it('pushes Player and Banker stakes on a tie and pays Tie 8:1 net', () => {
@@ -159,6 +176,7 @@ describe('settlement', () => {
     expect(settlement.totalStake).toBe(110)
     expect(settlement.totalReturned).toBe(190)
     expect(settlement.net).toBe(80)
+    expect(settlement.commissionCharged).toBe(0)
   })
 
   it('pays each qualifying pair independently at 11:1 net', () => {
@@ -172,8 +190,10 @@ describe('settlement', () => {
 
   it('rejects conflicting main bets and out-of-range side bets', () => {
     expect(validateBets({ ...EMPTY_BETS, player: 10, banker: 10 }, 1_000)).toMatch(
-      /同时下注/,
+      /本模拟桌/,
     )
     expect(validateBets({ ...EMPTY_BETS, tie: 1_010 }, 10_000)).toMatch(/上限/)
+    expect(validateBets({ ...EMPTY_BETS, player: 15 }, 10_000)).toMatch(/递增/)
+    expect(validateBets({ ...EMPTY_BETS, player: 1 }, 10_000)).toMatch(/下限/)
   })
 })

@@ -16,15 +16,26 @@ import {
   type ActiveCrowdCheer,
 } from './components/CrowdCheerOverlay'
 import { DealerArmBridge } from './components/DealerArmBridge'
+import { DealerNewShoeAction } from './components/DealerNewShoeAction'
+import { DealerTableAction } from './components/DealerTableAction'
 import { HistoryTable } from './components/HistoryTable'
-import { PlayingCard, RevealPlayingCard } from './components/PlayingCard'
+import {
+  PlayingCard,
+  RevealPlayingCard,
+  type RevealInputMethod,
+} from './components/PlayingCard'
 import { DealerRoadPanel, RoadBoard } from './components/RoadBoard'
+import { TableGuests } from './components/TableGuests'
+import {
+  TableMotionAtmosphere,
+  type TableMotionPhase,
+} from './components/TableMotionAtmosphere'
 import {
   EMPTY_BETS,
   RULESET_VERSION,
+  TABLE_LIMITS,
   cardsRemaining,
   createShoe,
-  dealRound,
   handTotal,
   settleBets,
   totalBets,
@@ -48,29 +59,60 @@ import {
   savePendingRound,
 } from './game/storage'
 import { isFlyRound } from './game/records'
+import { preparePendingRound } from './game/roundTransaction'
 import {
+  advanceRevealJournal,
+  loadMatchingRoundJournal,
+} from './game/roundJournal'
+import {
+  dealContactDelayMs,
   isMatchingDealMotion,
   motionFallbackMs,
   newlyVisibleUndealtCardIds,
   type DealMotionToken,
 } from './game/motion'
 import {
+  CHIP_STACK_IMPACT_MS,
+  appendWagerChip,
+  clearWagerChipLedger,
+  rebuildWagerChipLedger,
+  type WagerChipLedger,
+} from './game/chipPhysics'
+import {
+  dealerSettlementDuration,
+  type DealerSettlementMotion,
+} from './game/settlementMotion'
+import {
+  tableLeaseIsSupported,
+  tryAcquireTableLease,
+} from './game/tableLease'
+import {
   manualRevealSides,
   nextRevealCard,
+  openingDealCardIds,
   pendingRoundMatchesGame,
+  pendingRoundsMatch,
   revealIsComplete,
   revealSideForCard,
   revealedCards,
   visibleRevealCardIds,
 } from './game/reveal'
+import {
+  buildTableGuestRevealReactions,
+  buildTableGuestSettlementReactions,
+  createShoeTableGuests,
+  type PublicTableCardReveal,
+} from './game/tableGuests'
 import type { RevealSide } from './game/reveal'
 import { cardLabel } from './game/cards'
 import type {
   Bets,
   PendingRound,
   PersistedGameState,
+  PersistedPendingRound,
   PlayMode,
   RoundRecord,
+  ShoeState,
   Winner,
 } from './types'
 import './styles.css'
@@ -78,6 +120,28 @@ import './styles.css'
 const STARTING_BALANCE = 10_000
 type RevealActor = 'user' | 'dealer'
 type DetailView = 'road' | 'history' | null
+
+interface RoundPrelude {
+  id: string
+  bets: Bets
+  playMode: PlayMode
+  pending: PendingRound
+}
+
+interface NewShoeMotion {
+  id: string
+  mode: 'manual' | 'automatic'
+  shoe: ShoeState
+  roundIntent: RoundPrelude | null
+}
+
+interface OutcomeMotion {
+  id: string
+  winner: Winner
+}
+
+const NEW_SHOE_MOTION_MS = 1_600
+const OUTCOME_MOTION_MS = 1_080
 
 const SOURCES = [
   {
@@ -119,23 +183,10 @@ function makeInitialState(): PersistedGameState {
   }
 }
 
-function loadInitialSession(): {
-  game: PersistedGameState
-  pendingRound: PendingRound | null
-  revealedCount: number
-} {
-  const game = loadGameState() ?? makeInitialState()
-  const storedPending = loadPendingRound()
-
-  if (!storedPending) {
-    return { game, pendingRound: null, revealedCount: 0 }
-  }
-  if (!pendingRoundMatchesGame(game, storedPending)) {
-    clearPendingRound()
-    return { game, pendingRound: null, revealedCount: 0 }
-  }
-
-  const pendingRound: PendingRound = {
+function pendingRoundFromJournal(
+  storedPending: PersistedPendingRound,
+): PendingRound {
+  return {
     id: storedPending.id,
     playMode: storedPending.playMode,
     bets: storedPending.bets,
@@ -145,6 +196,35 @@ function loadInitialSession(): {
     shoeAfter: storedPending.shoeAfter,
     result: storedPending.result,
   }
+}
+
+function loadInitialSession(): {
+  game: PersistedGameState
+  pendingRound: PendingRound | null
+  revealedCount: number
+} {
+  let game = loadGameState() ?? makeInitialState()
+  let storedPending = loadPendingRound()
+
+  if (!storedPending) {
+    return { game, pendingRound: null, revealedCount: 0 }
+  }
+  if (!pendingRoundMatchesGame(game, storedPending)) {
+    const stalePendingId = storedPending.id
+    const latestGame = loadGameState() ?? game
+    const latestPending = loadPendingRound()
+    if (latestPending && pendingRoundMatchesGame(latestGame, latestPending)) {
+      game = latestGame
+      storedPending = latestPending
+    } else {
+      if (latestPending?.id === stalePendingId) {
+        clearPendingRound(stalePendingId)
+      }
+      return { game: latestGame, pendingRound: null, revealedCount: 0 }
+    }
+  }
+
+  const pendingRound = pendingRoundFromJournal(storedPending)
   const { revealedCount } = storedPending
   return { game, pendingRound, revealedCount }
 }
@@ -154,6 +234,12 @@ function formatNumber(value: number, digits = 2): string {
     minimumFractionDigits: value % 1 === 0 ? 0 : digits,
     maximumFractionDigits: digits,
   }).format(value)
+}
+
+function tableLeaseUnavailableMessage(action: string): string {
+  return tableLeaseIsSupported()
+    ? `另一标签页正在控制牌桌，暂时无法${action}。`
+    : `此浏览器缺少 Web Locks，无法安全${action}。`
 }
 
 function outcomeLabel(winner: Winner): string {
@@ -167,6 +253,7 @@ function revealSideLabel(side: RevealSide): string {
 }
 
 function revealScopeLabel(sides: RevealSide[]): string {
+  if (sides.length === 0) return '荷官开牌'
   if (sides.length === 1) return `只翻${revealSideLabel(sides[0])}`
   return '翻开双方'
 }
@@ -186,6 +273,9 @@ function roundRevealInstruction(round: PendingRound): string {
   if (round.playMode === 'fly') {
     return '飞牌进行中，本局无下注，荷官将自动开牌并写入路单。'
   }
+  if (revealSides.length === 0) {
+    return '下注已锁定。本局没有庄/闲主注，双方牌面由荷官依次开出。'
+  }
   if (revealSides.length === 1) {
     return `下注已锁定。本局由你翻开${revealSideLabel(
       revealSides[0],
@@ -202,21 +292,84 @@ interface ModalProps {
 }
 
 function Modal({ title, onClose, children, wide = false }: ModalProps) {
+  const dialogRef = useRef<HTMLElement>(null)
+  const onCloseRef = useRef(onClose)
+
   useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+    const backgroundElements = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '.app-shell > :not(.modal-backdrop):not(.toast)',
+      ),
+    )
+    const priorInert = backgroundElements.map((element) => element.inert)
+    backgroundElements.forEach((element) => {
+      element.inert = true
+    })
+    dialogRef.current?.focus({ preventScroll: true })
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return
+
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((element) => !element.hidden)
+      if (focusable.length === 0) {
+        event.preventDefault()
+        dialogRef.current.focus({ preventScroll: true })
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable.at(-1) ?? first
+      const activeElement = document.activeElement
+      if (
+        activeElement === dialogRef.current ||
+        !dialogRef.current.contains(activeElement)
+      ) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      backgroundElements.forEach((element, index) => {
+        element.inert = priorInert[index]
+      })
+      previouslyFocused?.focus({ preventScroll: true })
+    }
+  }, [])
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
+        ref={dialogRef}
         className={`modal-card ${wide ? 'modal-wide' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
+        tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
@@ -248,7 +401,7 @@ interface RoundHandProps {
   flippingCardId: string | null
   revealActor: RevealActor | null
   pendingTotal: number | null
-  onFlip: (cardId: string) => void
+  onFlip: (cardId: string, inputMethod: RevealInputMethod) => void
   onFlipComplete: (cardId: string) => void
   onDealComplete: (motion: DealMotionToken) => void
 }
@@ -290,6 +443,11 @@ function RoundHand({
   const revealedSideCount = pendingCards.filter((card) =>
     completedCardIds.has(card.id),
   ).length
+  const thirdCard = pendingCards[2] ?? null
+  const isThirdCardStage = Boolean(
+    thirdCard &&
+      (nextCardId === thirdCard.id || flippingCardId === thirdCard.id),
+  )
   const settledTotal = settledRound
     ? isPlayer
       ? settledRound.playerTotal
@@ -302,7 +460,12 @@ function RoundHand({
     : false
 
   return (
-    <div className={`hand hand-${side} ${pendingRound ? 'is-revealing' : ''}`}>
+    <div
+      className={`hand hand-${side} ${pendingRound ? 'is-revealing' : ''} ${
+        isThirdCardStage ? 'is-third-card-stage' : ''
+      }`}
+      data-hand-phase={isThirdCardStage ? 'third-card' : 'opening'}
+    >
       <div className="hand-label">
         <span>
           {sideLabel} <small>{sideEnglish}</small>
@@ -313,7 +476,7 @@ function RoundHand({
         </strong>
       </div>
 
-      <div className="cards-row">
+      <div className={`cards-row ${isThirdCardStage ? 'is-third-card-stage' : ''}`}>
         {pendingRound ? (
           visiblePendingCards.map((card, index) => {
             const isFlipping = flippingCardId === card.id
@@ -351,6 +514,7 @@ function RoundHand({
                   !nextCardRequiresUser &&
                   !flippingCardId
                 }
+                parkedForThirdCard={index < 2 && isThirdCardStage}
                 onFlip={onFlip}
                 onFlipComplete={onFlipComplete}
                 onDealComplete={onDealComplete}
@@ -381,7 +545,9 @@ function RoundHand({
       <div className="hand-tags">
         {pendingRound ? (
           <span className="reveal-side-note">
-            已翻 {revealedSideCount} / {visiblePendingCards.length}
+            {isThirdCardStage
+              ? '增牌单独观看 · 首两张已收拢'
+              : `已翻 ${revealedSideCount} / ${visiblePendingCards.length}`}
           </span>
         ) : (
           <>
@@ -403,6 +569,14 @@ function App() {
       ? { ...initialSession.pendingRound.bets }
       : { ...EMPTY_BETS },
   )
+  const [wagerChipLedger, setWagerChipLedger] =
+    useState<WagerChipLedger>(() =>
+      rebuildWagerChipLedger(
+        initialSession.pendingRound?.bets ?? EMPTY_BETS,
+      ),
+    )
+  const [settlementWagerChipLedger, setSettlementWagerChipLedger] =
+    useState<WagerChipLedger | null>(null)
   const [selectedChip, setSelectedChip] = useState(100)
   const [audioEnabled, setAudioEnabled] = useState(loadAudioPreference)
   const [pendingRound, setPendingRound] = useState<PendingRound | null>(
@@ -413,9 +587,7 @@ function App() {
   )
   const [flippingCardId, setFlippingCardId] = useState<string | null>(null)
   const [revealActor, setRevealActor] = useState<RevealActor | null>(null)
-  const [roundReady, setRoundReady] = useState(
-    Boolean(initialSession.pendingRound),
-  )
+  const [roundReady, setRoundReady] = useState(false)
   const [dealtCardIds, setDealtCardIds] = useState<Set<string>>(
     () =>
       new Set(
@@ -432,9 +604,7 @@ function App() {
   const [detailView, setDetailView] = useState<DetailView>(null)
   const [revealAnnouncement, setRevealAnnouncement] = useState(
     initialSession.pendingRound
-      ? initialSession.pendingRound.playMode === 'fly'
-        ? '飞牌对局已恢复，荷官将继续自动开牌。'
-        : '已锁定下注对局已恢复，将按下注侧继续翻牌。'
+      ? '检测到已锁定牌局，正在取得此牌桌的独占控制权…'
       : '请先选择下注对象与筹码，然后确认开牌。',
   )
   const [formError, setFormError] = useState<string | null>(null)
@@ -445,17 +615,26 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null)
   const [activeCrowdCheer, setActiveCrowdCheer] =
     useState<ActiveCrowdCheer | null>(null)
+  const [settlementMotion, setSettlementMotion] =
+    useState<DealerSettlementMotion | null>(null)
+  const [roundPrelude, setRoundPrelude] = useState<RoundPrelude | null>(null)
+  const [newShoeMotion, setNewShoeMotion] =
+    useState<NewShoeMotion | null>(null)
+  const [outcomeMotion, setOutcomeMotion] =
+    useState<OutcomeMotion | null>(null)
+  const [roundRequesting, setRoundRequesting] = useState(false)
 
   const gameRef = useRef(game)
+  const wagerChipLedgerRef = useRef(wagerChipLedger)
   const pendingRoundRef = useRef<PendingRound | null>(
     initialSession.pendingRound,
   )
   const revealedCountRef = useRef(initialSession.revealedCount)
   const flippingCardRef = useRef<string | null>(null)
   const revealActorRef = useRef<RevealActor | null>(null)
-  const roundReadyRef = useRef(Boolean(initialSession.pendingRound))
+  const roundReadyRef = useRef(false)
   const roundLockRef = useRef(Boolean(initialSession.pendingRound))
-  const flipLockRef = useRef(false)
+  const flipLockRef = useRef(Boolean(initialSession.pendingRound))
   const finalizeLockRef = useRef(false)
   const dealtCardIdsRef = useRef(
     new Set(
@@ -478,19 +657,209 @@ function App() {
   const dealGapTimerRef = useRef<number | null>(null)
   const crowdCheerTimerRef = useRef<number | null>(null)
   const outcomeCheerTimerRef = useRef<number | null>(null)
+  const outcomeMotionTimerRef = useRef<number | null>(null)
+  const settlementMotionTimerRef = useRef<number | null>(null)
+  const roundPreludeTimerRef = useRef<number | null>(null)
+  const roundPreludeRef = useRef<RoundPrelude | null>(null)
+  const newShoeMotionTimerRef = useRef<number | null>(null)
+  const newShoeMotionRef = useRef<NewShoeMotion | null>(null)
+  const settlementLockRef = useRef(false)
+  const tableLeaseReleaseRef = useRef<(() => void) | null>(null)
+  const tableLeaseRequestRef = useRef<Promise<boolean> | null>(null)
   const crowdCheerSequenceRef = useRef(0)
   const audioEventSequenceRef = useRef(0)
   const tableStageRef = useRef<HTMLElement>(null)
   const beginRevealCardRef = useRef<
-    (cardId: string, actor: RevealActor) => void
+    (
+      cardId: string,
+      actor: RevealActor,
+      inputMethod?: RevealInputMethod,
+    ) => void
   >(() => undefined)
+  const finalizeRoundRef = useRef<(roundId: string) => void>(
+    () => undefined,
+  )
 
-  const isDealing = pendingRound !== null
-  const dealingMode = pendingRound?.playMode ?? null
+  const isDealing =
+    roundRequesting ||
+    roundPrelude !== null ||
+    newShoeMotion !== null ||
+    pendingRound !== null ||
+    settlementMotion !== null
+  const dealingMode =
+    newShoeMotion?.roundIntent?.playMode ??
+    roundPrelude?.playMode ??
+    pendingRound?.playMode ??
+    null
+  const displayedBets =
+    settlementMotion?.bets ??
+    newShoeMotion?.roundIntent?.bets ??
+    roundPrelude?.bets ??
+    bets
+  const displayedWagerChipLedger =
+    settlementWagerChipLedger ?? wagerChipLedger
+  const isLockingBets = roundPrelude !== null
+
+  const replaceWagerChipLedger = (ledger: WagerChipLedger) => {
+    wagerChipLedgerRef.current = ledger
+    setWagerChipLedger(ledger)
+  }
+
+  const clearVisualWagers = () => {
+    replaceWagerChipLedger(clearWagerChipLedger())
+  }
+
+  const acquireTableLease = () => {
+    if (tableLeaseReleaseRef.current) return Promise.resolve(true)
+    if (tableLeaseRequestRef.current) return tableLeaseRequestRef.current
+
+    const request = tryAcquireTableLease().then((release) => {
+      if (!release) return false
+      if (tableLeaseReleaseRef.current) {
+        release()
+      } else {
+        tableLeaseReleaseRef.current = release
+      }
+      return true
+    })
+    tableLeaseRequestRef.current = request
+    void request.finally(() => {
+      if (tableLeaseRequestRef.current === request) {
+        tableLeaseRequestRef.current = null
+      }
+    })
+    return request
+  }
+
+  const releaseTableLease = () => {
+    const release = tableLeaseReleaseRef.current
+    tableLeaseReleaseRef.current = null
+    release?.()
+  }
 
   useEffect(() => {
-    saveGameState(game)
-  }, [game])
+    const expectedRound = initialSession.pendingRound
+    if (!expectedRound) return
+
+    let stopped = false
+    let retryTimer: number | null = null
+
+    const restoreWithExclusiveLease = async () => {
+      const release = await tryAcquireTableLease()
+      if (stopped) {
+        release?.()
+        return
+      }
+
+      if (!release) {
+        roundReadyRef.current = false
+        flipLockRef.current = true
+        setRoundReady(false)
+        setRevealAnnouncement(
+          tableLeaseIsSupported()
+            ? '另一标签页正在控制这局牌；当前页面保持只读并等待同步。'
+            : '当前浏览器不支持安全牌桌锁；为避免重复结算，这局牌保持只读。',
+        )
+        if (tableLeaseIsSupported()) {
+          retryTimer = window.setTimeout(restoreWithExclusiveLease, 900)
+        } else {
+          setFormError('此浏览器缺少 Web Locks，无法安全恢复或开始牌局。')
+        }
+        return
+      }
+
+      tableLeaseReleaseRef.current = release
+      const snapshot =
+        loadMatchingRoundJournal(expectedRound) ??
+        loadMatchingRoundJournal()
+
+      if (!snapshot) {
+        const latestGame = loadGameState()
+        if (latestGame) {
+          gameRef.current = latestGame
+          setGame(latestGame)
+        }
+        pendingRoundRef.current = null
+        revealedCountRef.current = 0
+        dealtCardIdsRef.current = new Set()
+        roundReadyRef.current = true
+        roundLockRef.current = false
+        flipLockRef.current = false
+        setPendingRound(null)
+        setRevealedCount(0)
+        setDealtCardIds(new Set())
+        setRoundReady(true)
+        setBets({ ...EMPTY_BETS })
+        const clearedLedger = clearWagerChipLedger()
+        wagerChipLedgerRef.current = clearedLedger
+        setWagerChipLedger(clearedLedger)
+        setRevealAnnouncement(
+          latestGame
+            ? '已同步牌桌最新进度，请重新选择下注。'
+            : '已锁定牌局的本机记录不完整；为避免重复结算，当前页面没有继续该局。',
+        )
+        releaseTableLease()
+        return
+      }
+
+      const restoredRound = pendingRoundFromJournal(snapshot.pending)
+      const restoredCount = snapshot.pending.revealedCount
+      const restoredDealtIds = new Set(
+        visibleRevealCardIds(restoredRound.result, restoredCount),
+      )
+      const isFullyRevealed = revealIsComplete(
+        restoredRound.result,
+        restoredCount,
+      )
+
+      gameRef.current = snapshot.game
+      pendingRoundRef.current = restoredRound
+      revealedCountRef.current = restoredCount
+      dealtCardIdsRef.current = restoredDealtIds
+      roundLockRef.current = true
+      roundReadyRef.current = !isFullyRevealed
+      flipLockRef.current = isFullyRevealed
+      setGame(snapshot.game)
+      setPendingRound(restoredRound)
+      setRevealedCount(restoredCount)
+      setDealtCardIds(restoredDealtIds)
+      setBets({ ...restoredRound.bets })
+      const restoredLedger = rebuildWagerChipLedger(restoredRound.bets)
+      wagerChipLedgerRef.current = restoredLedger
+      setWagerChipLedger(restoredLedger)
+      setRoundReady(!isFullyRevealed)
+      setRevealAnnouncement(
+        isFullyRevealed
+          ? '完整牌面与锁定下注已恢复，正在完成结算。'
+          : restoredRound.playMode === 'fly'
+            ? '飞牌对局已恢复，荷官将继续自动开牌。'
+            : '已锁定下注对局已恢复，将按下注侧继续翻牌。',
+      )
+
+      if (isFullyRevealed) {
+        finalizeLockRef.current = true
+        settleTimerRef.current = window.setTimeout(
+          () => finalizeRoundRef.current(restoredRound.id),
+          80,
+        )
+      }
+    }
+
+    void restoreWithExclusiveLease()
+    return () => {
+      stopped = true
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
+    }
+  }, [initialSession.pendingRound])
+
+  useEffect(() => {
+    // Bootstrap only when no valid state exists. Subsequent writes happen
+    // explicitly while the table lease is held, avoiding stale-render writes
+    // from an inactive tab.
+    if (!loadGameState()) {
+      saveGameState(gameRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     casinoAudio.setEnabled(audioEnabled)
@@ -500,6 +869,7 @@ function App() {
     const handleVisibilityChange = () => {
       void casinoAudio.setPageVisible(!document.hidden)
     }
+    void casinoAudio.setPageVisible(!document.hidden)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () =>
       document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -542,6 +912,21 @@ function App() {
       if (outcomeCheerTimerRef.current !== null) {
         window.clearTimeout(outcomeCheerTimerRef.current)
       }
+      if (outcomeMotionTimerRef.current !== null) {
+        window.clearTimeout(outcomeMotionTimerRef.current)
+      }
+      if (settlementMotionTimerRef.current !== null) {
+        window.clearTimeout(settlementMotionTimerRef.current)
+      }
+      if (roundPreludeTimerRef.current !== null) {
+        window.clearTimeout(roundPreludeTimerRef.current)
+      }
+      if (newShoeMotionTimerRef.current !== null) {
+        window.clearTimeout(newShoeMotionTimerRef.current)
+      }
+      const release = tableLeaseReleaseRef.current
+      tableLeaseReleaseRef.current = null
+      release?.()
     },
     [],
   )
@@ -549,6 +934,20 @@ function App() {
   const latestRound = game.history[game.history.length - 1] ?? null
   const settledCurrentRound =
     latestRound && latestRound.shoeId === game.shoe.id ? latestRound : null
+  const tableMotionPhase: TableMotionPhase = settlementMotion
+    ? 'settling'
+    : newShoeMotion
+      ? 'new-shoe'
+    : roundPrelude
+      ? 'no-more-bets'
+      : roundRequesting
+        ? 'no-more-bets'
+      : pendingRound
+          ? roundReady
+            ? 'revealing'
+            : 'dealing'
+          : 'betting'
+  const tableMotionOutcome = outcomeMotion?.winner ?? null
   const currentShoeRecords = useMemo(
     () => game.history.filter((record) => record.shoeId === game.shoe.id),
     [game.history, game.shoe.id],
@@ -620,6 +1019,58 @@ function App() {
   const pendingBankerTotal =
     revealedBankerCards.length > 0 ? handTotal(revealedBankerCards) : null
   const revealDisplayTotal = pendingRound ? visiblePendingCardIds.size : 0
+  const guestShoeId = pendingRound
+    ? pendingRound.sourceShoeId
+    : settlementMotion && settledCurrentRound
+      ? settledCurrentRound.shoeId
+      : game.shoe.id
+  const guestHandNumber = pendingRound
+    ? pendingRound.shoeAfter.handNumber
+    : settlementMotion && settledCurrentRound
+      ? settledCurrentRound.handNumber
+      : game.shoe.handNumber + 1
+  const tableGuests = useMemo(
+    () =>
+      createShoeTableGuests({
+        shoeId: guestShoeId,
+        handNumber: guestHandNumber,
+      }),
+    [guestHandNumber, guestShoeId],
+  )
+  const publicGuestReveals = useMemo<PublicTableCardReveal[]>(
+    () =>
+      pendingRound
+        ? revealedCards(pendingRound.result, revealedCount).map((card) => ({
+            side: revealSideForCard(pendingRound.result, card.id) ?? 'player',
+            card,
+          }))
+        : [],
+    [pendingRound, revealedCount],
+  )
+  const guestRevealReactions = useMemo(
+    () =>
+      buildTableGuestRevealReactions({
+        shoeId: guestShoeId,
+        handNumber: guestHandNumber,
+        guests: tableGuests,
+        publicReveals: publicGuestReveals,
+      }),
+    [guestHandNumber, guestShoeId, publicGuestReveals, tableGuests],
+  )
+  const guestSettlementReactions = useMemo(
+    () =>
+      settlementMotion && settledCurrentRound
+        ? buildTableGuestSettlementReactions({
+            shoeId: settledCurrentRound.shoeId,
+            handNumber: settledCurrentRound.handNumber,
+            guests: tableGuests,
+            winner: settledCurrentRound.winner,
+            playerPair: settledCurrentRound.playerPair,
+            bankerPair: settledCurrentRound.bankerPair,
+          })
+        : [],
+    [settledCurrentRound, settlementMotion, tableGuests],
+  )
 
   const nextAudioEventId = (label: string) => {
     audioEventSequenceRef.current += 1
@@ -637,6 +1088,21 @@ function App() {
         }
       })
     }
+  }
+
+  const openRulesModal = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.focus({ preventScroll: true })
+    setRulesOpen(true)
+  }
+
+  const openNewShoeModal = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.focus({ preventScroll: true })
+    setNewShoeOpen(true)
+  }
+
+  const openResetModal = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.focus({ preventScroll: true })
+    setResetOpen(true)
   }
 
   const clearCrowdCheer = () => {
@@ -711,24 +1177,33 @@ function App() {
     rulesOpen,
   ])
 
-  const handleAddBet = (target: keyof Bets) => {
+  const handleAddBet = (
+    target: keyof Bets,
+    amount = selectedChip,
+    source: 'tap' | 'drag' = 'tap',
+  ) => {
     setFormError(null)
     if ((target === 'player' && bets.banker > 0) || (target === 'banker' && bets.player > 0)) {
-      setFormError('标准牌桌不可同时下注庄与闲')
-      return
+      setFormError('本模拟桌设置为不可同时下注庄与闲')
+      return false
     }
 
-    const candidate = { ...bets, [target]: bets[target] + selectedChip }
-    const targetMax = target === 'player' || target === 'banker' ? 10_000 : 1_000
-    if (candidate[target] > targetMax) {
-      setFormError(`${target === 'player' || target === 'banker' ? '庄/闲' : '和/对子'}单项已达上限`)
-      return
+    const candidate = { ...bets, [target]: bets[target] + amount }
+    const targetLimit = TABLE_LIMITS[target]
+    if (candidate[target] > targetLimit.max) {
+      setFormError(
+        `${target === 'player' || target === 'banker' ? '庄/闲' : '和/对子'}单项上限为 ${targetLimit.max.toLocaleString('zh-CN')} 分`,
+      )
+      return false
     }
     if (totalBets(candidate) > game.balance) {
       setFormError('教学分余额不足')
-      return
+      return false
     }
     setBets(candidate)
+    replaceWagerChipLedger(
+      appendWagerChip(wagerChipLedgerRef.current, target, amount),
+    )
     casinoAudio.playChip(
       nextAudioEventId(`bet:${target}`),
       target === 'player'
@@ -736,7 +1211,11 @@ function App() {
         : target === 'banker'
           ? 'banker'
           : 'center',
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 0
+        : CHIP_STACK_IMPACT_MS + (source === 'drag' ? 25 : 0),
     )
+    return true
   }
 
   const handleRepeat = () => {
@@ -746,8 +1225,15 @@ function App() {
       return
     }
     setBets({ ...game.lastBets })
+    replaceWagerChipLedger(rebuildWagerChipLedger(game.lastBets))
     setFormError(null)
-    casinoAudio.playChip(nextAudioEventId('repeat-bets'), 'center')
+    casinoAudio.playChip(
+      nextAudioEventId('repeat-bets'),
+      'center',
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 0
+        : CHIP_STACK_IMPACT_MS,
+    )
   }
 
   const clearDealTimers = () => {
@@ -762,8 +1248,9 @@ function App() {
   }
 
   function finishDealSequence(roundId: string) {
+    const current = pendingRoundRef.current
     if (
-      pendingRoundRef.current?.id !== roundId ||
+      current?.id !== roundId ||
       activeDealMotionRef.current ||
       dealQueueRef.current.length > 0
     ) {
@@ -773,7 +1260,26 @@ function App() {
     roundReadyRef.current = true
     flipLockRef.current = false
     setRoundReady(true)
-    setRevealAnnouncement(roundRevealInstruction(pendingRoundRef.current))
+    setRevealAnnouncement(roundRevealInstruction(current))
+
+    const nextCard = nextRevealCard(current.result, revealedCountRef.current)
+    const nextSide = nextCard
+      ? revealSideForCard(current.result, nextCard.id)
+      : null
+    if (current.playMode === 'fly') {
+      casinoAudio.playDealerCall(
+        `${current.id}:dealer-call:auto:${revealedCountRef.current}`,
+        '飞牌，自动开牌',
+      )
+    } else if (
+      nextSide &&
+      manualRevealSides(current.bets, current.playMode).includes(nextSide)
+    ) {
+      casinoAudio.playDealerCall(
+        `${current.id}:dealer-call:open:${revealedCountRef.current}`,
+        `${revealSideLabel(nextSide)}请开牌`,
+      )
+    }
   }
 
   function startNextDealCard(roundId: string) {
@@ -807,9 +1313,17 @@ function App() {
       }第 ${sideIndex + 1} 张牌…`,
     )
     if (side) {
+      const reducedMotion = window.matchMedia(
+        '(prefers-reduced-motion: reduce)',
+      ).matches
       casinoAudio.playDealStart(
         `${roundId}:deal:${motion.sequence}:start`,
         side,
+      )
+      casinoAudio.playCardLand(
+        `${roundId}:deal:${motion.sequence}:land`,
+        side,
+        dealContactDelayMs(window.innerWidth, reducedMotion),
       )
     }
 
@@ -825,14 +1339,6 @@ function App() {
     clearDealTimers()
     const current = pendingRoundRef.current
     if (!current || current.id !== signal.roundId) return
-
-    const dealtSide = revealSideForCard(current.result, signal.cardId)
-    if (dealtSide) {
-      casinoAudio.playCardLand(
-        `${signal.roundId}:deal:${signal.sequence}:land`,
-        dealtSide,
-      )
-    }
 
     const nextDealtIds = new Set(dealtCardIdsRef.current)
     nextDealtIds.add(signal.cardId)
@@ -887,13 +1393,18 @@ function App() {
       return
     }
 
+    // A third card follows a reveal scene, so allow the clean dealer plate to
+    // cross-fade before exposing the shoe-lip crop. Opening cards already begin
+    // on the clean plate and only need the short queue handoff.
+    const plateWarmupMs = dealtCardIdsRef.current.size > 0 ? 180 : 30
     dealGapTimerRef.current = window.setTimeout(() => {
       dealGapTimerRef.current = null
       startNextDealCard(current.id)
-    }, 30)
+    }, plateWarmupMs)
   }
 
   const releasePendingRound = (clearPersisted = true) => {
+    const pendingId = pendingRoundRef.current?.id
     if (flipFallbackTimerRef.current !== null) {
       window.clearTimeout(flipFallbackTimerRef.current)
       flipFallbackTimerRef.current = null
@@ -918,7 +1429,8 @@ function App() {
     roundLockRef.current = false
     flipLockRef.current = false
     finalizeLockRef.current = false
-    if (clearPersisted) clearPendingRound()
+    releaseTableLease()
+    if (clearPersisted && pendingId) clearPendingRound(pendingId)
     setPendingRound(null)
     setRevealedCount(0)
     setFlippingCardId(null)
@@ -944,6 +1456,35 @@ function App() {
       }
       return
     }
+
+    const persistedGame = loadGameState()
+    const persistedPending = loadPendingRound()
+    const persistedRoundIsIntact =
+      persistedGame !== null &&
+      persistedPending !== null &&
+      persistedGame.shoe.id === current.sourceShoeId &&
+      persistedGame.shoe.cursor === current.sourceCursor &&
+      persistedPending.id === current.id &&
+      pendingRoundMatchesGame(persistedGame, persistedPending) &&
+      pendingRoundsMatch(current, persistedPending)
+
+    if (!persistedRoundIsIntact) {
+      if (persistedGame) {
+        gameRef.current = persistedGame
+        setGame(persistedGame)
+      }
+      const alreadySettled = Boolean(
+        persistedGame?.history.some((item) => item.id === current.id),
+      )
+      setNotice(
+        alreadySettled
+          ? '本局已由另一标签页完成，当前牌桌已同步。'
+          : '已锁定牌局的本机记录不再完整，本局已安全取消且未扣除教学分。',
+      )
+      releasePendingRound()
+      return
+    }
+
     if (currentGame.history.some((item) => item.id === current.id)) {
       releasePendingRound()
       return
@@ -987,14 +1528,52 @@ function App() {
           : currentGame.lastBets,
     }
     const saved = saveGameState(nextGame)
+    const shouldAnimateSettlement =
+      current.playMode === 'bet' && settlement.totalStake > 0
+    if (shouldAnimateSettlement) {
+      setSettlementWagerChipLedger(wagerChipLedgerRef.current)
+    } else {
+      setSettlementWagerChipLedger(null)
+    }
     gameRef.current = nextGame
     setGame(nextGame)
     setBets({ ...EMPTY_BETS })
+    clearVisualWagers()
+    setOutcomeMotion({
+      id: current.id,
+      winner: current.result.winner,
+    })
+    if (outcomeMotionTimerRef.current !== null) {
+      window.clearTimeout(outcomeMotionTimerRef.current)
+    }
+    outcomeMotionTimerRef.current = window.setTimeout(
+      () => {
+        outcomeMotionTimerRef.current = null
+        setOutcomeMotion(null)
+      },
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 30
+        : OUTCOME_MOTION_MS,
+    )
+    if (shouldAnimateSettlement) {
+      settlementLockRef.current = true
+      setSettlementMotion({
+        id: current.id,
+        net: settlement.net,
+        bets: { ...current.bets },
+        returns: { ...settlement.breakdown },
+        wagerChipLedger: wagerChipLedgerRef.current,
+      })
+    }
     casinoAudio.playSettlement(
       `${current.id}:settlement`,
       current.result.winner,
       settlement.net,
       current.playMode === 'fly',
+    )
+    casinoAudio.playDealerCall(
+      `${current.id}:dealer-call:result`,
+      outcomeLabel(current.result.winner),
     )
     setRevealAnnouncement(
       `本局${outcomeLabel(current.result.winner)}，净输赢${
@@ -1015,57 +1594,87 @@ function App() {
         )
       }, 720)
     }
-    window.requestAnimationFrame(() => {
-      if (!document.querySelector('[role="dialog"]')) {
-        document
-          .querySelector<HTMLButtonElement>('.bet-zone:not(:disabled)')
-          ?.focus({ preventScroll: true })
+    const releaseSettlementTable = () => {
+      settlementMotionTimerRef.current = null
+      settlementLockRef.current = false
+      setSettlementMotion(null)
+      setSettlementWagerChipLedger(null)
+      window.requestAnimationFrame(() => {
+        if (!document.querySelector('[role="dialog"]')) {
+          document
+            .querySelector<HTMLButtonElement>('.bet-zone:not(:disabled)')
+            ?.focus({ preventScroll: true })
+        }
+      })
+    }
+    if (shouldAnimateSettlement) {
+      if (settlementMotionTimerRef.current !== null) {
+        window.clearTimeout(settlementMotionTimerRef.current)
       }
-    })
+      settlementMotionTimerRef.current = window.setTimeout(
+        releaseSettlementTable,
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 30
+          : dealerSettlementDuration({
+              id: current.id,
+              net: settlement.net,
+              bets: current.bets,
+              returns: settlement.breakdown,
+            }) + 180,
+      )
+    } else {
+      releaseSettlementTable()
+    }
     if (!saved) {
       setNotice('本局已在当前页面结算，但浏览器阻止本机保存；刷新可能丢失本局。')
     } else if (current.shoeAfter.needsShuffle) {
       setNotice('切牌位置已到达：本局有效，下一局将自动开启新牌靴。')
     }
   }
+  useEffect(() => {
+    finalizeRoundRef.current = finalizeRound
+  })
 
-  const startRound = (roundBets: Bets, playMode: PlayMode) => {
-    if (roundLockRef.current || pendingRoundRef.current) return
-    roundLockRef.current = true
-    setFormError(null)
-    clearCrowdCheer()
+  const commitRound = (intent: RoundPrelude) => {
+    if (
+      roundPreludeRef.current?.id !== intent.id ||
+      pendingRoundRef.current ||
+      settlementLockRef.current
+    ) {
+      return
+    }
 
+    roundPreludeTimerRef.current = null
+    roundPreludeRef.current = null
+    setRoundPrelude(null)
     try {
       const currentGame = gameRef.current
-      const activeShoe = currentGame.shoe.needsShuffle
-        ? createShoe()
-        : currentGame.shoe
-      const { shoe: shoeAfter, result } = dealRound(activeShoe)
-      const pending: PendingRound = {
-        id: createRoundId(),
-        playMode,
-        bets: { ...roundBets },
-        balanceBefore: currentGame.balance,
-        sourceShoeId: activeShoe.id,
-        sourceCursor: activeShoe.cursor,
-        shoeAfter,
-        result,
-      }
-      casinoAudio.playRoundOpen(`${pending.id}:round-open`)
+      const persistedGame = loadGameState()
+      const savedPending = loadPendingRound()
+      const gameMoved =
+        !persistedGame ||
+        persistedGame.shoe.id !== currentGame.shoe.id ||
+        persistedGame.shoe.cursor !== currentGame.shoe.cursor
+      const pendingMoved =
+        !savedPending ||
+        savedPending.id !== intent.id ||
+        savedPending.revealedCount !== 0 ||
+        !pendingRoundMatchesGame(currentGame, savedPending) ||
+        !pendingRoundsMatch(intent.pending, savedPending)
 
-      if (currentGame.shoe.needsShuffle) {
-        const activeGame = { ...currentGame, shoe: activeShoe }
-        saveGameState(activeGame)
-        gameRef.current = activeGame
-        setGame(activeGame)
-        setNotice(`已自动开启新牌靴 ${activeShoe.id.slice(-8)}。`)
+      if (gameMoved || pendingMoved) {
+        if (persistedGame) {
+          gameRef.current = persistedGame
+          setGame(persistedGame)
+        }
+        roundLockRef.current = false
+        releaseTableLease()
+        setFormError('已锁定牌局的本机记录发生变化，请重新确认下注。')
+        setNotice('牌桌已同步到最新的本机进度；没有重复扣除教学分。')
+        return
       }
 
-      const pendingSaved = savePendingRound({
-        ...pending,
-        version: 1,
-        revealedCount: 0,
-      })
+      const pending: PendingRound = savedPending
       pendingRoundRef.current = pending
       revealedCountRef.current = 0
       flippingCardRef.current = null
@@ -1085,12 +1694,9 @@ function App() {
       setActiveDealMotion(null)
       startDealSequence(
         pending,
-        visibleRevealCardIds(pending.result, 0),
-        '停止下注。荷官正在从牌靴依次发出四张底牌…',
+        openingDealCardIds(pending.result),
+        '停止下注。已锁定牌局已安全保存，荷官正在从牌靴依次发出四张底牌…',
       )
-      if (!pendingSaved) {
-        setNotice('浏览器阻止本机保存；本局仍可继续，但刷新后无法恢复。')
-      }
 
       window.requestAnimationFrame(() => {
         document.querySelector('#game-table')?.scrollIntoView({
@@ -1101,8 +1707,316 @@ function App() {
         })
       })
     } catch {
+      roundPreludeRef.current = null
+      setRoundPrelude(null)
       roundLockRef.current = false
+      releaseTableLease()
       setFormError('牌靴暂时无法完成本局，请开启新牌靴后重试')
+    }
+  }
+
+  const beginRoundPrelude = (intent: RoundPrelude) => {
+    if (
+      roundPreludeRef.current?.id !== intent.id ||
+      pendingRoundRef.current ||
+      settlementLockRef.current ||
+      newShoeMotionRef.current
+    ) {
+      return
+    }
+
+    setRoundPrelude(intent)
+    setRevealAnnouncement(
+      intent.playMode === 'fly'
+        ? '飞牌请求已锁定。荷官示意停止下注后开始本局。'
+        : '本局筹码已锁定。荷官正在示意停止下注。',
+    )
+    casinoAudio.playRoundOpen(`${intent.id}:round-open`)
+    casinoAudio.playDealerCall(
+      `${intent.id}:dealer-call:no-more-bets`,
+      '停止下注',
+    )
+
+    const reducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches
+    roundPreludeTimerRef.current = window.setTimeout(
+      () => commitRound(intent),
+      reducedMotion ? 20 : intent.playMode === 'fly' ? 540 : 720,
+    )
+
+    window.requestAnimationFrame(() => {
+      document.querySelector('#game-table')?.scrollIntoView({
+        behavior: reducedMotion ? 'auto' : 'smooth',
+        block: 'start',
+      })
+    })
+  }
+
+  const completeNewShoeMotion = (motion: NewShoeMotion) => {
+    if (newShoeMotionRef.current?.id !== motion.id) return
+
+    newShoeMotionTimerRef.current = null
+    newShoeMotionRef.current = null
+    const currentGame = gameRef.current
+    const persistedGame = loadGameState()
+    const persistedPending = loadPendingRound()
+
+    if (motion.mode === 'automatic' && motion.roundIntent) {
+      const automaticJournalIsIntact =
+        persistedGame !== null &&
+        persistedPending !== null &&
+        persistedGame.shoe.id === motion.shoe.id &&
+        persistedGame.shoe.cursor === motion.shoe.cursor &&
+        persistedPending.id === motion.roundIntent.id &&
+        pendingRoundMatchesGame(persistedGame, persistedPending) &&
+        pendingRoundsMatch(motion.roundIntent.pending, persistedPending)
+
+      setNewShoeMotion(null)
+      if (!automaticJournalIsIntact) {
+        clearPendingRound(motion.roundIntent.id)
+        if (persistedGame) {
+          gameRef.current = persistedGame
+          setGame(persistedGame)
+        }
+        roundPreludeRef.current = null
+        roundLockRef.current = false
+        releaseTableLease()
+        setFormError('自动换靴后的锁定牌局记录不完整，本局没有开始。')
+        setRevealAnnouncement(
+          '新牌靴已保留，但本局锁定日志校验失败；没有扣除教学分。',
+        )
+        setNotice('自动换靴完成；异常牌局已安全取消。')
+        return
+      }
+
+      gameRef.current = persistedGame
+      setGame(persistedGame)
+      setNotice(
+        `已自动装入新牌靴 ${motion.shoe.id.slice(-8)}，现在停止下注。`,
+      )
+      beginRoundPrelude(motion.roundIntent)
+      return
+    }
+
+    const ownsPersistedPending =
+      motion.roundIntent !== null &&
+      persistedPending?.id === motion.roundIntent.id
+    if (
+      (persistedGame &&
+        (persistedGame.shoe.id !== currentGame.shoe.id ||
+          persistedGame.shoe.cursor !== currentGame.shoe.cursor)) ||
+      (persistedPending &&
+        !ownsPersistedPending &&
+        pendingRoundMatchesGame(currentGame, persistedPending))
+    ) {
+      if (persistedGame) {
+        gameRef.current = persistedGame
+        setGame(persistedGame)
+      }
+      setNewShoeMotion(null)
+      roundPreludeRef.current = null
+      roundLockRef.current = false
+      releaseTableLease()
+      setFormError('另一标签页已更新牌桌，新牌靴操作已安全取消。')
+      setNotice('牌桌已同步到另一标签页的最新进度。')
+      return
+    }
+
+    const nextGame = { ...currentGame, shoe: motion.shoe }
+    const saved = saveGameState(nextGame)
+    setNewShoeMotion(null)
+    if (!saved) {
+      roundPreludeRef.current = null
+      roundLockRef.current = false
+      releaseTableLease()
+      setFormError('浏览器未能保存新牌靴，本局尚未开始，请重试。')
+      setRevealAnnouncement('新牌靴未能保存；原牌靴保持不变，本局未扣分。')
+      setNotice('新牌靴保存失败，已安全取消。')
+      return
+    }
+
+    gameRef.current = nextGame
+    setGame(nextGame)
+
+    roundLockRef.current = false
+    releaseTableLease()
+    setBets({ ...EMPTY_BETS })
+    clearVisualWagers()
+    setRevealAnnouncement('新牌靴已完成装牌与烧牌，请选择下注对象与筹码。')
+    setNotice(`已手动开启新牌靴 ${motion.shoe.id.slice(-8)}；既有记录仍保留。`)
+  }
+
+  const beginNewShoeMotion = (
+    mode: NewShoeMotion['mode'],
+    roundIntent: RoundPrelude | null,
+    preparedShoe?: ShoeState,
+  ) => {
+    if (newShoeMotionRef.current) return
+
+    const motion: NewShoeMotion = {
+      id: `new-shoe-${createRoundId()}`,
+      mode,
+      shoe: preparedShoe ?? createShoe(),
+      roundIntent,
+    }
+    newShoeMotionRef.current = motion
+    setNewShoeMotion(motion)
+    setRevealAnnouncement(
+      mode === 'automatic'
+        ? '切牌位已到达。荷官正在装入新牌、压实牌靴并烧牌。'
+        : '荷官正在装入新牌、压实牌靴，并按指示牌点数完成烧牌。',
+    )
+    casinoAudio.playNewShoe(`${motion.id}:sound`)
+    casinoAudio.playDealerCall(`${motion.id}:dealer-call`, '更换牌靴')
+
+    newShoeMotionTimerRef.current = window.setTimeout(
+      () => completeNewShoeMotion(motion),
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 20
+        : NEW_SHOE_MOTION_MS,
+    )
+  }
+
+  const requestRound = async (roundBets: Bets, playMode: PlayMode) => {
+    if (
+      roundLockRef.current ||
+      settlementLockRef.current ||
+      pendingRoundRef.current ||
+      roundPreludeRef.current ||
+      newShoeMotionRef.current
+    ) {
+      return
+    }
+
+    roundLockRef.current = true
+    setRoundRequesting(true)
+    setFormError(null)
+    setRevealAnnouncement(
+      playMode === 'fly'
+        ? '停止下注。正在取得飞牌牌局的独占控制权…'
+        : '停止下注。正在取得牌桌独占控制权并锁定本局筹码…',
+    )
+    if (audioEnabled) void casinoAudio.unlock()
+    try {
+      const leaseAcquired = await acquireTableLease()
+    if (!leaseAcquired) {
+      roundLockRef.current = false
+      setFormError(tableLeaseUnavailableMessage('开始本局'))
+      return
+    }
+    if (
+      settlementLockRef.current ||
+      pendingRoundRef.current ||
+      roundPreludeRef.current ||
+      newShoeMotionRef.current
+    ) {
+      roundLockRef.current = false
+      releaseTableLease()
+      return
+    }
+
+    let activeGame = gameRef.current
+    const persistedGame = loadGameState()
+    if (
+      persistedGame &&
+      (persistedGame.shoe.id !== activeGame.shoe.id ||
+        persistedGame.shoe.cursor !== activeGame.shoe.cursor)
+    ) {
+      gameRef.current = persistedGame
+      setGame(persistedGame)
+      roundLockRef.current = false
+      releaseTableLease()
+      setFormError('另一标签页已推进牌靴，请在最新牌面上重新确认下注。')
+      return
+    }
+    if (!persistedGame && !saveGameState(activeGame)) {
+      roundLockRef.current = false
+      releaseTableLease()
+      setFormError('浏览器无法保存牌靴；为避免刷新后重抽，本局没有开始。')
+      return
+    }
+
+    const storedPending = loadPendingRound()
+    if (storedPending) {
+      if (pendingRoundMatchesGame(activeGame, storedPending)) {
+        roundLockRef.current = false
+        releaseTableLease()
+        setFormError('另一标签页正在进行同一牌靴的牌局，请完成后再试。')
+        return
+      }
+      clearPendingRound(storedPending.id)
+    }
+
+    let automaticShoe: ShoeState | null = null
+    if (activeGame.shoe.needsShuffle) {
+      automaticShoe = createShoe()
+      const nextGame = { ...activeGame, shoe: automaticShoe }
+      if (!saveGameState(nextGame)) {
+        roundLockRef.current = false
+        releaseTableLease()
+        setFormError('浏览器无法保存新牌靴，本局没有开始。')
+        return
+      }
+      activeGame = nextGame
+      gameRef.current = nextGame
+      setGame(nextGame)
+    }
+
+    let persistedPending
+    try {
+      persistedPending = preparePendingRound({
+        game: activeGame,
+        bets: roundBets,
+        playMode,
+        roundId: createRoundId(),
+      })
+    } catch {
+      roundLockRef.current = false
+      releaseTableLease()
+      setFormError('牌靴无法完成本局，请更换牌靴后重试。')
+      return
+    }
+
+    const pendingSaved = savePendingRound(persistedPending)
+    const savedPending = pendingSaved ? loadPendingRound() : null
+    if (
+      !pendingSaved ||
+      savedPending?.id !== persistedPending.id ||
+      !savedPending ||
+      !pendingRoundMatchesGame(activeGame, savedPending)
+    ) {
+      clearPendingRound(persistedPending.id)
+      roundLockRef.current = false
+      releaseTableLease()
+      setFormError('浏览器无法耐久锁定本局；为避免重抽或重复结算，本局没有开始。')
+      return
+    }
+
+    const pending: PendingRound = persistedPending
+    const intent: RoundPrelude = {
+      id: pending.id,
+      bets: { ...roundBets },
+      playMode,
+      pending,
+    }
+    roundPreludeRef.current = intent
+    clearCrowdCheer()
+      if (automaticShoe) {
+        beginNewShoeMotion('automatic', intent, automaticShoe)
+      } else {
+        beginRoundPrelude(intent)
+      }
+    } finally {
+      setRoundRequesting(false)
+      if (
+        !roundLockRef.current &&
+        !pendingRoundRef.current &&
+        !roundPreludeRef.current &&
+        !newShoeMotionRef.current
+      ) {
+        setRevealAnnouncement('牌局未开始；请查看下注区提示后重试。')
+      }
     }
   }
 
@@ -1129,6 +2043,42 @@ function App() {
 
     const completedActor = revealActorRef.current
     const nextCount = currentCount + 1
+    const journalAdvance = advanceRevealJournal({
+      game: gameRef.current,
+      round: current,
+      currentRevealedCount: currentCount,
+      nextRevealedCount: nextCount,
+    })
+    if (journalAdvance.status !== 'advanced') {
+      flippingCardRef.current = null
+      revealActorRef.current = null
+      setFlippingCardId(null)
+      setRevealActor(null)
+
+      if (journalAdvance.status === 'write-failed') {
+        flipLockRef.current = false
+        roundReadyRef.current = true
+        setRoundReady(true)
+        setRevealAnnouncement(
+          '本张翻牌进度未能写入本机日志，牌面没有推进；请重试本张。',
+        )
+        setNotice('持久化写入失败：本局未结算，已保留上一个安全进度。')
+        return
+      }
+
+      const latestGame = loadGameState()
+      if (latestGame) {
+        gameRef.current = latestGame
+        setGame(latestGame)
+      }
+      setRevealAnnouncement(
+        '已锁定牌局的进度与本机日志不一致；为避免重复结算，当前页面已停止该局。',
+      )
+      setNotice('牌局日志发生冲突，未扣除教学分。刷新后可读取最新安全进度。')
+      releasePendingRound(false)
+      return
+    }
+
     revealedCountRef.current = nextCount
     flippingCardRef.current = null
     revealActorRef.current = null
@@ -1190,12 +2140,6 @@ function App() {
       return
     }
 
-    savePendingRound({
-      ...current,
-      version: 1,
-      revealedCount: nextCount,
-    })
-
     const newlyVisibleCards = newlyVisibleUndealtCardIds(
       visibleRevealCardIds(current.result, currentCount),
       visibleRevealCardIds(current.result, nextCount),
@@ -1203,6 +2147,10 @@ function App() {
     )
     if (newlyVisibleCards.length > 0) {
       casinoAudio.playRoundOpen(`${current.id}:third-card-cue`)
+      casinoAudio.playDealerCall(
+        `${current.id}:dealer-call:third-card:${nextCount}`,
+        '补牌',
+      )
       startDealSequence(
         current,
         newlyVisibleCards,
@@ -1214,7 +2162,11 @@ function App() {
     flipLockRef.current = false
   }
 
-  const beginRevealCard = (cardId: string, actor: RevealActor) => {
+  const beginRevealCard = (
+    cardId: string,
+    actor: RevealActor,
+    inputMethod?: RevealInputMethod,
+  ) => {
     const current = pendingRoundRef.current
     const expectedCard = current
       ? nextRevealCard(current.result, revealedCountRef.current)
@@ -1248,11 +2200,13 @@ function App() {
     revealActorRef.current = actor
     setFlippingCardId(cardId)
     setRevealActor(actor)
-    casinoAudio.playRevealStart(
-      `${current.id}:reveal:${cardId}:start`,
-      expectedSide,
-      actor === 'dealer',
-    )
+    if (!(actor === 'user' && inputMethod === 'pointer')) {
+      casinoAudio.playRevealStart(
+        `${current.id}:reveal:${cardId}:start`,
+        expectedSide,
+        actor === 'dealer',
+      )
+    }
     if (actor === 'user' && current.playMode === 'bet') {
       const publicCards = revealedCards(
         current.result,
@@ -1303,8 +2257,11 @@ function App() {
     beginRevealCardRef.current = beginRevealCard
   })
 
-  const handleRevealCard = (cardId: string) => {
-    beginRevealCard(cardId, 'user')
+  const handleRevealCard = (
+    cardId: string,
+    inputMethod: RevealInputMethod,
+  ) => {
+    beginRevealCard(cardId, 'user', inputMethod)
   }
 
   const handleRevealComplete = (cardId: string) => {
@@ -1367,7 +2324,7 @@ function App() {
       return
     }
 
-    startRound({ ...bets }, 'bet')
+    requestRound({ ...bets }, 'bet')
   }
 
   const handleFly = () => {
@@ -1376,34 +2333,105 @@ function App() {
       return
     }
 
-    startRound({ ...EMPTY_BETS }, 'fly')
+    requestRound({ ...EMPTY_BETS }, 'fly')
   }
 
-  const replaceShoe = () => {
-    if (pendingRoundRef.current) return
+  const replaceShoe = async () => {
+    if (
+      roundLockRef.current ||
+      pendingRoundRef.current ||
+      roundPreludeRef.current ||
+      newShoeMotionRef.current ||
+      settlementLockRef.current
+    ) {
+      return
+    }
     clearCrowdCheer()
-    const shoe = createShoe()
-    const nextGame = { ...gameRef.current, shoe }
-    gameRef.current = nextGame
-    setGame(nextGame)
-    setBets({ ...EMPTY_BETS })
     setNewShoeOpen(false)
-    casinoAudio.playNewShoe(nextAudioEventId('new-shoe'))
-    setRevealAnnouncement('新牌靴已就绪，请选择下注对象与筹码。')
-    setNotice(`已手动开启新牌靴 ${shoe.id.slice(-8)}；既有记录仍保留。`)
+    roundLockRef.current = true
+    if (audioEnabled) void casinoAudio.unlock()
+    setFormError(null)
+    const leaseAcquired = await acquireTableLease()
+    if (!leaseAcquired) {
+      roundLockRef.current = false
+      setFormError(tableLeaseUnavailableMessage('更换牌靴'))
+      return
+    }
+    if (
+      pendingRoundRef.current ||
+      roundPreludeRef.current ||
+      newShoeMotionRef.current ||
+      settlementLockRef.current
+    ) {
+      roundLockRef.current = false
+      releaseTableLease()
+      return
+    }
+    beginNewShoeMotion('manual', null)
   }
 
-  const resetSimulation = () => {
-    if (pendingRoundRef.current) return
+  const resetSimulation = async () => {
+    if (
+      roundLockRef.current ||
+      pendingRoundRef.current ||
+      roundPreludeRef.current ||
+      newShoeMotionRef.current ||
+      settlementLockRef.current
+    ) {
+      return
+    }
+    roundLockRef.current = true
+    const leaseAcquired = await acquireTableLease()
+    if (!leaseAcquired) {
+      roundLockRef.current = false
+      setResetOpen(false)
+      setFormError(tableLeaseUnavailableMessage('重置'))
+      return
+    }
+    if (
+      pendingRoundRef.current ||
+      roundPreludeRef.current ||
+      newShoeMotionRef.current ||
+      settlementLockRef.current
+    ) {
+      roundLockRef.current = false
+      releaseTableLease()
+      return
+    }
+    const currentGame = gameRef.current
+    const persistedGame = loadGameState()
+    const persistedPending = loadPendingRound()
+    if (
+      (persistedGame &&
+        (persistedGame.shoe.id !== currentGame.shoe.id ||
+          persistedGame.shoe.cursor !== currentGame.shoe.cursor)) ||
+      (persistedGame &&
+        persistedPending &&
+        pendingRoundMatchesGame(persistedGame, persistedPending))
+    ) {
+      if (persistedGame) {
+        gameRef.current = persistedGame
+        setGame(persistedGame)
+      }
+      roundLockRef.current = false
+      releaseTableLease()
+      setResetOpen(false)
+      setFormError('另一标签页已更新牌桌，请确认最新进度后再重置。')
+      return
+    }
     clearCrowdCheer()
     clearGameState()
     const nextGame = makeInitialState()
+    saveGameState(nextGame)
     gameRef.current = nextGame
     setGame(nextGame)
     setBets({ ...EMPTY_BETS })
+    clearVisualWagers()
     setResetOpen(false)
     setRevealAnnouncement('请先选择下注对象与筹码，然后确认开牌。')
     setNotice('模拟数据与教学分已重置。')
+    roundLockRef.current = false
+    releaseTableLease()
   }
 
   const exportCsv = () => {
@@ -1462,7 +2490,7 @@ function App() {
         <nav aria-label="主导航">
           <button onClick={() => openDetailView('road')}>路单大屏</button>
           <button onClick={() => openDetailView('history')}>牌局记录</button>
-          <button onClick={() => setRulesOpen(true)}>规则与来源</button>
+          <button onClick={openRulesModal}>规则与来源</button>
         </nav>
 
         <div className="topbar-status">
@@ -1472,7 +2500,7 @@ function App() {
           </span>
           <button
             className="outline-button"
-            onClick={() => setNewShoeOpen(true)}
+            onClick={openNewShoeModal}
             disabled={isDealing}
           >
             <RefreshCw size={15} />
@@ -1506,10 +2534,12 @@ function App() {
                 {currentShoeRecords.length === 0 ? (
                   <small>等待第一局</small>
                 ) : (
-                  currentShoeRecords.slice(-12).map((record) => (
+                  currentShoeRecords.slice(-12).map((record, index, records) => (
                     <i
                       key={record.id}
-                      className={`mini-result mini-result-${record.winner}`}
+                      className={`mini-result mini-result-${record.winner} ${
+                        index === records.length - 1 ? 'is-latest' : ''
+                      }`}
                       title={outcomeLabel(record.winner)}
                     >
                       {record.winner === 'banker'
@@ -1535,7 +2565,14 @@ function App() {
                 pendingRound ? 'is-revealing' : ''
               } ${pendingRound && !roundReady ? 'is-dealing-cards' : ''} ${
                 activeDealMotion ? 'is-dealing-card' : ''
+              } ${roundRequesting || isLockingBets ? 'is-locking-bets' : ''} ${
+                settlementMotion ? 'is-settling-table' : ''
+              } ${newShoeMotion ? 'is-new-shoe' : ''} ${
+                flippingCardId && revealActor === 'dealer'
+                  ? 'is-dealer-revealing'
+                  : ''
               }`}
+              data-table-phase={tableMotionPhase}
             >
               <div className="felt-pattern" />
               <img
@@ -1545,16 +2582,52 @@ function App() {
                 aria-hidden="true"
                 fetchPriority="high"
               />
+              <div className="dealer-idle-breath" aria-hidden="true" />
               <div className="dealer-clean-plate" aria-hidden="true" />
               <div className="casino-scene-vignette" aria-hidden="true" />
+              <TableMotionAtmosphere
+                phase={tableMotionPhase}
+                outcome={tableMotionOutcome}
+                motionId={outcomeMotion?.id ?? null}
+              />
               <div
                 className="dealer-shoe-motion-anchor"
                 data-dealer-shoe-anchor
                 aria-hidden="true"
               />
+              <div
+                className="dealer-shoe-foreground-occlusion"
+                data-dealer-shoe-occlusion
+                aria-hidden="true"
+              />
               <DealerArmBridge
                 key={activeDealMotion?.sequence ?? 'dealer-idle'}
                 motion={activeDealMotion}
+                stageRef={tableStageRef}
+              />
+              <DealerNewShoeAction
+                shoe={newShoeMotion?.shoe ?? null}
+                mode={newShoeMotion?.mode ?? 'manual'}
+              />
+              {isLockingBets && (
+                <div
+                  className={`dealer-signal-gesture ${
+                    roundPrelude?.playMode === 'fly' ? 'is-fly' : ''
+                  }`}
+                  aria-hidden="true"
+                >
+                  <span className="dealer-signal-sleeve" />
+                  <img
+                    src="/assets/card-reveal-hand-v2.webp"
+                    alt=""
+                    draggable="false"
+                    decoding="async"
+                  />
+                </div>
+              )}
+              <DealerTableAction
+                key={settlementMotion?.id ?? 'dealer-settlement-idle'}
+                motion={settlementMotion}
                 stageRef={tableStageRef}
               />
               <div className="table-corner-controls">
@@ -1577,6 +2650,16 @@ function App() {
                   <span>现场音效</span>
                   <strong>{audioEnabled ? '开' : '关'}</strong>
                 </button>
+                <button
+                  type="button"
+                  className="table-new-shoe-toggle"
+                  onClick={openNewShoeModal}
+                  disabled={isDealing}
+                  aria-label="手动开启新牌靴"
+                >
+                  <RefreshCw size={15} aria-hidden="true" />
+                  <span>新牌靴</span>
+                </button>
                 <div className="table-simulation-corner">
                   <span aria-hidden="true">九</span>
                   <strong>纯模拟 · 无真钱</strong>
@@ -1587,7 +2670,15 @@ function App() {
                 <div>
                   <p className="eyebrow">LIVE DEALER · 第一视角</p>
                   <h2>
-                    {pendingRound
+                    {settlementMotion
+                      ? '荷官正在逐区结算'
+                      : newShoeMotion
+                        ? '荷官正在更换牌靴'
+                      : roundRequesting
+                        ? '正在锁定牌桌'
+                      : roundPrelude
+                        ? '停止下注'
+                        : pendingRound
                       ? !roundReady
                         ? '荷官正在发牌'
                         : flippingCardId
@@ -1602,7 +2693,31 @@ function App() {
                         : '请下注'}
                   </h2>
                 </div>
-                {pendingRound ? (
+                {newShoeMotion ? (
+                  <div className="round-net reveal-progress">
+                    <span>
+                      {newShoeMotion.mode === 'automatic'
+                        ? '自动换靴'
+                        : '手动换靴'}
+                    </span>
+                    <strong>
+                      亮 {newShoeMotion.shoe.burnCard.rank} · 共销{' '}
+                      {newShoeMotion.shoe.burnedCards} 张
+                    </strong>
+                  </div>
+                ) : roundRequesting ? (
+                  <div className="round-net reveal-progress">
+                    <span>正在取得独占控制</span>
+                    <strong>LOCKING TABLE</strong>
+                  </div>
+                ) : roundPrelude ? (
+                  <div className="round-net reveal-progress">
+                    <span>
+                      {roundPrelude.playMode === 'fly' ? '飞牌 · 无下注' : '筹码已锁定'}
+                    </span>
+                    <strong>NO MORE BETS</strong>
+                  </div>
+                ) : pendingRound ? (
                   <div className="round-net reveal-progress">
                     <span>
                       {!roundReady
@@ -1650,7 +2765,15 @@ function App() {
                   <i />
                   荷官
                   <strong>
-                    {pendingRound
+                    {settlementMotion
+                      ? '结算中'
+                      : newShoeMotion
+                        ? '烧牌中'
+                      : roundRequesting
+                        ? '锁桌中'
+                      : roundPrelude
+                        ? '停止下注'
+                      : pendingRound
                       ? !roundReady
                         ? '发牌中'
                         : '牌局进行中'
@@ -1658,6 +2781,22 @@ function App() {
                   </strong>
                 </span>
               </div>
+
+              {settlementMotion && settledCurrentRound ? (
+                <TableGuests
+                  guests={tableGuests}
+                  phase="settled"
+                  settlementReactions={guestSettlementReactions}
+                />
+              ) : pendingRound ? (
+                <TableGuests
+                  guests={tableGuests}
+                  phase="revealing"
+                  activeReaction={guestRevealReactions.at(-1) ?? null}
+                />
+              ) : (
+                <TableGuests guests={tableGuests} phase="betting" />
+              )}
 
               <div className="hands-layout first-person-hands">
                 <RoundHand
@@ -1715,10 +2854,12 @@ function App() {
               </p>
 
               <BettingPanel
-                bets={bets}
+                bets={displayedBets}
+                wagerChipLedger={displayedWagerChipLedger}
                 balance={game.balance}
                 selectedChip={selectedChip}
                 isDealing={isDealing}
+                isSettling={settlementMotion !== null}
                 dealingMode={dealingMode}
                 error={formError}
                 hasLastBets={totalBets(game.lastBets) > 0}
@@ -1726,6 +2867,7 @@ function App() {
                 onAddBet={handleAddBet}
                 onClear={() => {
                   setBets({ ...EMPTY_BETS })
+                  clearVisualWagers()
                   setFormError(null)
                 }}
                 onRepeat={handleRepeat}
@@ -1780,7 +2922,7 @@ function App() {
               <History size={16} />
               完整牌局记录
             </button>
-            <button onClick={() => setRulesOpen(true)}>
+            <button onClick={openRulesModal}>
               <BookOpen size={16} />
               规则与真实性
             </button>
@@ -1809,7 +2951,7 @@ function App() {
             八副牌经 Web Crypto 洗牌，并按公开监管补牌规则逐张发出。教学分不可购买、兑换或提现；
             视觉场景为原创模拟环境，与任何实体娱乐场无关。
           </p>
-          <button onClick={() => setRulesOpen(true)}>查看公开依据</button>
+          <button onClick={openRulesModal}>查看公开依据</button>
         </section>
       </main>
 
@@ -1829,8 +2971,8 @@ function App() {
           及其关联方无关，未获其赞助或背书。历史路单不具备预测能力。
         </p>
         <div className="footer-actions">
-          <button onClick={() => setRulesOpen(true)}>规则与来源</button>
-          <button onClick={() => setResetOpen(true)} disabled={isDealing}>
+          <button onClick={openRulesModal}>规则与来源</button>
+          <button onClick={openResetModal} disabled={isDealing}>
             重置本机数据
           </button>
         </div>
@@ -1849,7 +2991,8 @@ function App() {
             <span className="simulation-badge">8 副牌 · 416 张 · 传统庄佣</span>
             <p>
               本模拟器以新加坡博彩监管局公布的 Marina Bay Sands Baccarat Version 8
-              为主规则来源，并固定使用其中允许的八副牌配置。
+              为数学与结算主规则来源，并固定使用其中允许的八副牌配置；开牌流程采用澳门式
+              “闲家先开”的明确桌面配置。
             </p>
           </div>
 
@@ -1896,6 +3039,17 @@ function App() {
               <h3>闲家补牌</h3>
               <p>无自然牌时，闲家 0–5 点必须补一张；6–7 点停牌。</p>
               <p>若闲家停牌，庄家 0–5 点补牌、6–7 点停牌。</p>
+            </article>
+            <article>
+              <h3>本桌咪牌与限额</h3>
+              <p>
+                先开闲家首两张，再开庄家首两张，随后依次处理闲、庄增牌；增牌单独观看，
+                首两张牌在该阶段收拢。
+              </p>
+              <p>
+                当前唯一坐位玩家只有在下注庄或闲主注时才咪对应一侧；和、对子单注由荷官开牌。
+                主注限额 10–10,000，和/对子限额 10–1,000。
+              </p>
             </article>
           </div>
 

@@ -4,8 +4,17 @@ export interface DealMotionToken {
   sequence: number
 }
 
+export interface MotionPoint {
+  x: number
+  y: number
+}
+
 const DEALER_MOTION_FALLBACK_MS = 1_400
 const USER_MOTION_FALLBACK_MS = 2_800
+
+export const DESKTOP_DEAL_MOTION_MS = 880
+export const MOBILE_DEAL_MOTION_MS = 760
+export const DEAL_CONTACT_PROGRESS = 0.76
 
 export const DRAG_REVEAL_COMMIT_PROGRESS = 0.62
 export type SqueezeCorner = 'left' | 'right'
@@ -27,6 +36,30 @@ export interface DragRevealMetrics {
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value))
+
+/**
+ * Move from an origin toward a target without exceeding the physical travel
+ * available to the dealer's hand. The card can continue sliding after this
+ * release point, while the arm retracts instead of stretching across the felt.
+ */
+export function cappedMotionPoint(
+  origin: MotionPoint,
+  target: MotionPoint,
+  maximumDistance: number,
+): MotionPoint {
+  const deltaX = target.x - origin.x
+  const deltaY = target.y - origin.y
+  const distance = Math.hypot(deltaX, deltaY)
+
+  if (distance === 0 || maximumDistance <= 0) return { ...origin }
+  if (distance <= maximumDistance) return { ...target }
+
+  const ratio = maximumDistance / distance
+  return {
+    x: origin.x + deltaX * ratio,
+    y: origin.y + deltaY * ratio,
+  }
+}
 
 export interface SqueezeVisualFrame {
   peekPercent: number
@@ -133,4 +166,14 @@ export function motionFallbackMs(actor: 'user' | 'dealer'): number {
   return actor === 'user'
     ? USER_MOTION_FALLBACK_MS
     : DEALER_MOTION_FALLBACK_MS
+}
+
+export function dealContactDelayMs(
+  viewportWidth: number,
+  reducedMotion = false,
+): number {
+  if (reducedMotion) return 0
+  const duration =
+    viewportWidth <= 760 ? MOBILE_DEAL_MOTION_MS : DESKTOP_DEAL_MOTION_MS
+  return Math.round(duration * DEAL_CONTACT_PROGRESS)
 }

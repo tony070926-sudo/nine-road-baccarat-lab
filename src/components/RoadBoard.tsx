@@ -124,24 +124,39 @@ function RoadGrid<T extends string>({
           {gridCells.map((index) => (
             <span className="road-grid-cell" key={index} aria-hidden="true" />
           ))}
-          {cells.map((cell, index) => (
-            <span
-              className="road-result-cell"
-              key={`${cell.row}-${cell.col}-${index}`}
-              style={{ gridRow: cell.row + 1, gridColumn: cell.col + 1 }}
-            >
-              {kind === 'bead' && (
-                <OutcomeMark
-                  winner={cell.value as Winner}
-                  record={records?.[cell.sourceIndex]}
-                />
-              )}
-              {kind === 'big' && bigCells && <MainRoadMark cell={bigCells[index]} />}
-              {(kind === 'eye' || kind === 'small' || kind === 'cockroach') && (
-                <DerivedMark color={cell.value as RoadColor} kind={kind} />
-              )}
-            </span>
-          ))}
+          {cells.map((cell, index) => {
+            const isLatest =
+              autoFollowKey !== undefined && index === cells.length - 1
+            const latestRoundId =
+              isLatest && kind === 'big'
+                ? bigCells?.[index]?.roundIds.at(-1)
+                : undefined
+
+            return (
+              <span
+                className={`road-result-cell ${isLatest ? 'is-latest' : ''}`}
+                key={`${cell.row}-${cell.col}-${index}-${
+                  isLatest ? (latestRoundId ?? autoFollowKey) : 'stable'
+                }`}
+                style={{ gridRow: cell.row + 1, gridColumn: cell.col + 1 }}
+              >
+                {kind === 'bead' && (
+                  <OutcomeMark
+                    winner={cell.value as Winner}
+                    record={records?.[cell.sourceIndex]}
+                  />
+                )}
+                {kind === 'big' && bigCells && (
+                  <MainRoadMark cell={bigCells[index]} />
+                )}
+                {(kind === 'eye' ||
+                  kind === 'small' ||
+                  kind === 'cockroach') && (
+                  <DerivedMark color={cell.value as RoadColor} kind={kind} />
+                )}
+              </span>
+            )
+          })}
           {cells.length === 0 && emptyLabel && (
             <span className="dealer-road-empty">{emptyLabel}</span>
           )}

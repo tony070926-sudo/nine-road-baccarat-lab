@@ -1,5 +1,9 @@
 import type { PersistedGameState, PersistedPendingRound } from '../types'
 import { resolvePlayMode } from './records'
+import {
+  isPersistedGameState,
+  isPersistedPendingRound,
+} from './stateValidation'
 
 const STORAGE_KEY = 'nine-road-baccarat:v1'
 const PENDING_STORAGE_KEY = 'nine-road-baccarat:pending:v1'
@@ -9,9 +13,8 @@ export function loadGameState(): PersistedGameState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as PersistedGameState
-    if (parsed.version !== 1 || !parsed.shoe || !Array.isArray(parsed.history)) return null
-    return parsed
+    const parsed: unknown = JSON.parse(raw)
+    return isPersistedGameState(parsed) ? parsed : null
   } catch {
     return null
   }
@@ -35,16 +38,8 @@ export function loadPendingRound(): PersistedPendingRound | null {
   try {
     const raw = localStorage.getItem(PENDING_STORAGE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as PersistedPendingRound
-    if (
-      parsed.version !== 1 ||
-      !parsed.result ||
-      !parsed.shoeAfter ||
-      !Number.isInteger(parsed.revealedCount)
-    ) {
-      return null
-    }
-    return parsed
+    const parsed: unknown = JSON.parse(raw)
+    return isPersistedPendingRound(parsed) ? parsed : null
   } catch {
     return null
   }
@@ -60,8 +55,15 @@ export function savePendingRound(state: PersistedPendingRound): boolean {
   }
 }
 
-export function clearPendingRound(): void {
+export function clearPendingRound(expectedId?: string): void {
   try {
+    if (expectedId) {
+      const raw = localStorage.getItem(PENDING_STORAGE_KEY)
+      if (raw) {
+        const stored = JSON.parse(raw) as Partial<PersistedPendingRound>
+        if (stored.id !== expectedId) return
+      }
+    }
     localStorage.removeItem(PENDING_STORAGE_KEY)
   } catch {
     // Storage can be unavailable in private browsing or under a strict policy.
@@ -85,6 +87,7 @@ function escapeCsv(value: string | number | boolean): string {
 
 export function historyToCsv(history: PersistedGameState['history']): string {
   const headers = [
+    'round_id',
     'shoe_id',
     'hand_number',
     'timestamp',
@@ -97,8 +100,16 @@ export function historyToCsv(history: PersistedGameState['history']): string {
     'natural',
     'player_pair',
     'banker_pair',
+    'bet_player',
+    'bet_banker',
+    'bet_tie',
+    'bet_player_pair',
+    'bet_banker_pair',
     'total_stake',
+    'total_returned',
+    'commission_charged',
     'net',
+    'balance_before',
     'balance_after',
     'cards_remaining',
     'ruleset_version',
@@ -106,6 +117,7 @@ export function historyToCsv(history: PersistedGameState['history']): string {
   ]
 
   const rows = history.map((record) => [
+    record.id,
     record.shoeId,
     record.handNumber,
     record.timestamp,
@@ -118,8 +130,17 @@ export function historyToCsv(history: PersistedGameState['history']): string {
     record.natural,
     record.playerPair,
     record.bankerPair,
+    record.bets.player,
+    record.bets.banker,
+    record.bets.tie,
+    record.bets.playerPair,
+    record.bets.bankerPair,
     record.settlement.totalStake,
+    record.settlement.totalReturned,
+    record.settlement.commissionCharged ??
+      (record.winner === 'banker' ? record.bets.banker * 0.05 : 0),
     record.settlement.net,
+    record.balanceBefore,
     record.balanceAfter,
     record.cardsRemaining,
     record.rulesetVersion,

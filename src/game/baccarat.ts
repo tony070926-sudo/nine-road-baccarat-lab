@@ -37,6 +37,24 @@ export const EMPTY_BETS: Bets = {
   bankerPair: 0,
 }
 
+export const TABLE_LIMITS: Readonly<
+  Record<keyof Bets, { min: number; max: number; step: number }>
+> = {
+  player: { min: 10, max: 10_000, step: 10 },
+  banker: { min: 10, max: 10_000, step: 10 },
+  tie: { min: 10, max: 1_000, step: 10 },
+  playerPair: { min: 10, max: 1_000, step: 10 },
+  bankerPair: { min: 10, max: 1_000, step: 10 },
+}
+
+const BET_LABELS: Record<keyof Bets, string> = {
+  player: '闲',
+  banker: '庄',
+  tie: '和',
+  playerPair: '闲对',
+  bankerPair: '庄对',
+}
+
 const SUITS: Suit[] = ['spades', 'hearts', 'diamonds', 'clubs']
 const RANKS: Rank[] = [
   'A',
@@ -58,13 +76,27 @@ export type RandomInt = (maxExclusive: number) => number
 
 let fallbackIdCounter = 0
 
-function uuid(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID()
+function shoeIdentifier(): string {
+  const runtimeCrypto = globalThis.crypto
+  if (
+    runtimeCrypto &&
+    typeof runtimeCrypto.randomUUID === 'function'
+  ) {
+    return runtimeCrypto.randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase()
+  }
+  if (
+    runtimeCrypto &&
+    typeof runtimeCrypto.getRandomValues === 'function'
+  ) {
+    const bytes = new Uint8Array(8)
+    runtimeCrypto.getRandomValues(bytes)
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase()
   }
 
   fallbackIdCounter += 1
-  return `shoe-${Date.now()}-${fallbackIdCounter}`
+  return `${Date.now().toString(36)}-${fallbackIdCounter.toString(36).padStart(4, '0')}`.toUpperCase()
 }
 
 /**
@@ -138,7 +170,7 @@ export function handTotal(cards: Card[]): number {
 
 export function createShoe(
   randomInt: RandomInt = secureRandomInt,
-  id = `S-${uuid().slice(0, 8).toUpperCase()}`,
+  id = `S-${shoeIdentifier()}`,
 ): ShoeState {
   const cards = shuffleCards(createUnshuffledDeck(), randomInt)
   const burnCard = cards[0]
@@ -255,20 +287,36 @@ export function totalBets(bets: Bets): number {
 }
 
 export function validateBets(bets: Bets, balance: number): string | null {
-  const values = Object.values(bets)
-  if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+  const entries = Object.entries(bets) as Array<[keyof Bets, number]>
+  if (
+    entries.some(
+      ([, value]) =>
+        !Number.isSafeInteger(value) ||
+        value < 0,
+    )
+  ) {
     return '下注金额无效'
   }
   if (bets.player > 0 && bets.banker > 0) {
-    return '标准牌桌不可同时下注庄与闲'
+    return '本模拟桌设置为不可同时下注庄与闲'
   }
 
   const total = totalBets(bets)
   if (total <= 0) return '请先放置至少一个筹码'
   if (total > balance) return '教学分余额不足'
-  if (bets.player > 10_000 || bets.banker > 10_000) return '庄/闲单项上限为 10,000 分'
-  if (bets.tie > 1_000 || bets.playerPair > 1_000 || bets.bankerPair > 1_000) {
-    return '和/对子单项上限为 1,000 分'
+
+  for (const [target, value] of entries) {
+    if (value === 0) continue
+    const limit = TABLE_LIMITS[target]
+    if (value < limit.min) {
+      return `${BET_LABELS[target]}单项下限为 ${limit.min.toLocaleString('zh-CN')} 分`
+    }
+    if (value > limit.max) {
+      return `${BET_LABELS[target]}单项上限为 ${limit.max.toLocaleString('zh-CN')} 分`
+    }
+    if (value % limit.step !== 0) {
+      return `${BET_LABELS[target]}须以 ${limit.step.toLocaleString('zh-CN')} 分递增`
+    }
   }
   return null
 }
@@ -280,11 +328,13 @@ export function validateBets(bets: Bets, balance: number): string | null {
 export function settleBets(bets: Bets, result: DealResult): Settlement {
   const totalStake = totalBets(bets)
   const breakdown: Settlement['breakdown'] = {}
+  const commissionCharged =
+    result.winner === 'banker' ? bets.banker * 0.05 : 0
 
   if (result.winner === 'player') {
     breakdown.player = bets.player * 2
   } else if (result.winner === 'banker') {
-    breakdown.banker = bets.banker * 1.95
+    breakdown.banker = bets.banker * 2 - commissionCharged
   } else {
     breakdown.player = bets.player
     breakdown.banker = bets.banker
@@ -303,6 +353,7 @@ export function settleBets(bets: Bets, result: DealResult): Settlement {
     totalStake,
     totalReturned,
     net: totalReturned - totalStake,
+    commissionCharged,
     breakdown,
   }
 }

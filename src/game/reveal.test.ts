@@ -4,12 +4,20 @@ import type {
   DealResult,
   PersistedGameState,
   PersistedPendingRound,
-  ShoeState,
 } from '../types'
+import {
+  EMPTY_BETS,
+  createSeededRandomInt,
+  createShoe,
+  dealRound,
+} from './baccarat'
 import {
   manualRevealSides,
   nextRevealCard,
+  openingDealCardIds,
   pendingRoundMatchesGame,
+  pendingRoundsMatch,
+  revealOrder,
   revealIsComplete,
   revealSideForCard,
   revealedCards,
@@ -36,22 +44,37 @@ function result(cardIds: string[]): DealResult {
   }
 }
 
-function shoe(
-  cards: Card[],
-  cursor: number,
-  handNumber: number,
-): ShoeState {
-  return {
-    id: 'shoe-1',
-    cards,
-    cursor,
-    cutAtRemaining: 14,
-    burnCard: card('burn'),
-    burnedCards: 0,
-    handNumber,
-    shuffleVersion: 'test',
-    needsShuffle: false,
+function pendingFixture(seed = 41): {
+  game: PersistedGameState
+  pending: PersistedPendingRound
+} {
+  const sourceShoe = createShoe(
+    createSeededRandomInt(seed),
+    'S-PENDING-RESTORE',
+  )
+  const dealt = dealRound(sourceShoe)
+  const game: PersistedGameState = {
+    version: 1,
+    balance: 10_000,
+    shoe: sourceShoe,
+    history: [],
+    lastBets: { ...EMPTY_BETS },
+    sessionStartedAt: '2026-07-27T00:00:00.000Z',
   }
+  const pending: PersistedPendingRound = {
+    version: 1,
+    id: 'round-1',
+    playMode: 'bet',
+    bets: { ...EMPTY_BETS, player: 100 },
+    balanceBefore: 10_000,
+    sourceShoeId: sourceShoe.id,
+    sourceCursor: sourceShoe.cursor,
+    shoeAfter: dealt.shoe,
+    result: dealt.result,
+    revealedCount: Math.min(3, dealt.result.cardsUsed - 1),
+  }
+
+  return { game, pending }
 }
 
 describe('manual reveal sequencing', () => {
@@ -79,7 +102,7 @@ describe('manual reveal sequencing', () => {
         },
         'bet',
       ),
-    ).toEqual(['banker'])
+    ).toEqual([])
     expect(
       manualRevealSides(
         {
@@ -91,10 +114,10 @@ describe('manual reveal sequencing', () => {
         },
         'bet',
       ),
-    ).toEqual(['player', 'banker'])
+    ).toEqual(['player'])
   })
 
-  it('treats tie as two-sided and no-bet fly rounds as fully automatic', () => {
+  it('leaves tie, pair-only, and no-bet fly rounds to the dealer', () => {
     expect(
       manualRevealSides(
         {
@@ -106,7 +129,7 @@ describe('manual reveal sequencing', () => {
         },
         'bet',
       ),
-    ).toEqual(['player', 'banker'])
+    ).toEqual([])
     expect(
       manualRevealSides(
         {
@@ -143,35 +166,48 @@ describe('manual reveal sequencing', () => {
   it('keeps third cards hidden until all four opening cards are revealed', () => {
     const sixCardRound = result(['p1', 'b1', 'p2', 'b2', 'p3', 'b3'])
 
-    expect(visibleRevealCardIds(sixCardRound, 0)).toEqual(['p1', 'b1', 'p2', 'b2'])
-    expect(visibleRevealCardIds(sixCardRound, 3)).toEqual(['p1', 'b1', 'p2', 'b2'])
+    expect(visibleRevealCardIds(sixCardRound, 0)).toEqual(['p1', 'p2', 'b1', 'b2'])
+    expect(visibleRevealCardIds(sixCardRound, 3)).toEqual(['p1', 'p2', 'b1', 'b2'])
     expect(visibleRevealCardIds(sixCardRound, 4)).toEqual([
       'p1',
-      'b1',
       'p2',
+      'b1',
       'b2',
       'p3',
     ])
     expect(visibleRevealCardIds(sixCardRound, 5)).toEqual([
       'p1',
-      'b1',
       'p2',
+      'b1',
       'b2',
       'p3',
       'b3',
     ])
   })
 
-  it('reveals strictly in the locked deal order', () => {
+  it('keeps physical deal order separate from Player-first reveal order', () => {
     const fiveCardRound = result(['p1', 'b1', 'p2', 'b2', 'p3'])
 
+    expect(openingDealCardIds(fiveCardRound)).toEqual([
+      'p1',
+      'b1',
+      'p2',
+      'b2',
+    ])
+    expect(revealOrder(fiveCardRound).map((item) => item.id)).toEqual([
+      'p1',
+      'p2',
+      'b1',
+      'b2',
+      'p3',
+    ])
     expect(nextRevealCard(fiveCardRound, 0)?.id).toBe('p1')
     expect(nextRevealCard(fiveCardRound, 4)?.id).toBe('p3')
     expect(nextRevealCard(fiveCardRound, 5)).toBeNull()
     expect(revealedCards(fiveCardRound, 3).map((item) => item.id)).toEqual([
       'p1',
-      'b1',
       'p2',
+      'b1',
     ])
   })
 
@@ -183,40 +219,7 @@ describe('manual reveal sequencing', () => {
   })
 
   it('only restores a pending round against its original unadvanced shoe', () => {
-    const lockedResult = result(['p1', 'b1', 'p2', 'b2', 'p3', 'b3'])
-    const sourceShoe = shoe(lockedResult.dealOrder, 0, 0)
-    const game: PersistedGameState = {
-      version: 1,
-      balance: 10_000,
-      shoe: sourceShoe,
-      history: [],
-      lastBets: {
-        player: 0,
-        banker: 0,
-        tie: 0,
-        playerPair: 0,
-        bankerPair: 0,
-      },
-      sessionStartedAt: '2026-07-27T00:00:00.000Z',
-    }
-    const pending: PersistedPendingRound = {
-      version: 1,
-      id: 'round-1',
-      playMode: 'bet',
-      bets: {
-        player: 100,
-        banker: 0,
-        tie: 0,
-        playerPair: 0,
-        bankerPair: 0,
-      },
-      balanceBefore: 10_000,
-      sourceShoeId: sourceShoe.id,
-      sourceCursor: 0,
-      shoeAfter: shoe(lockedResult.dealOrder, 6, 1),
-      result: lockedResult,
-      revealedCount: 3,
-    }
+    const { game, pending } = pendingFixture()
 
     expect(pendingRoundMatchesGame(game, pending)).toBe(true)
     expect(
@@ -228,9 +231,15 @@ describe('manual reveal sequencing', () => {
     expect(
       pendingRoundMatchesGame(game, {
         ...pending,
-        revealedCount: lockedResult.dealOrder.length,
+        revealedCount: pending.result.dealOrder.length + 1,
       }),
     ).toBe(false)
+    expect(
+      pendingRoundMatchesGame(game, {
+        ...pending,
+        revealedCount: pending.result.dealOrder.length,
+      }),
+    ).toBe(true)
     expect(
       pendingRoundMatchesGame(game, {
         ...pending,
@@ -239,26 +248,62 @@ describe('manual reveal sequencing', () => {
     ).toBe(false)
   })
 
-  it('rejects malformed persisted data without throwing', () => {
-    const lockedResult = result(['p1', 'b1', 'p2', 'b2'])
-    const game: PersistedGameState = {
-      version: 1,
-      balance: 10_000,
-      shoe: shoe(lockedResult.dealOrder, 0, 0),
-      history: [],
-      lastBets: {
-        player: 0,
-        banker: 0,
-        tie: 0,
-        playerPair: 0,
-        bankerPair: 0,
-      },
-      sessionStartedAt: '2026-07-27T00:00:00.000Z',
+  it('rejects an internally valid deal generated from a substituted shoe', () => {
+    const { game, pending } = pendingFixture()
+    let substitutedShoe = createShoe(
+      createSeededRandomInt(42),
+      game.shoe.id,
+    )
+    for (let seed = 43; substitutedShoe.cursor !== game.shoe.cursor; seed += 1) {
+      substitutedShoe = createShoe(
+        createSeededRandomInt(seed),
+        game.shoe.id,
+      )
     }
+    const substitutedDeal = dealRound(substitutedShoe)
+    const substitutedPending: PersistedPendingRound = {
+      ...pending,
+      sourceCursor: substitutedShoe.cursor,
+      shoeAfter: substitutedDeal.shoe,
+      result: substitutedDeal.result,
+      revealedCount: 0,
+    }
+
+    expect(pendingRoundMatchesGame(game, substitutedPending)).toBe(false)
+  })
+
+  it('detects any change to the durable journal payload', () => {
+    const { pending } = pendingFixture()
+
+    expect(pendingRoundsMatch(pending, structuredClone(pending))).toBe(true)
+    expect(
+      pendingRoundsMatch(pending, {
+        ...structuredClone(pending),
+        bets: { ...pending.bets, player: 200 },
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects an over-limit wager and a tampered outcome', () => {
+    const { game, pending } = pendingFixture()
+    const overLimit = {
+      ...pending,
+      bets: { ...EMPTY_BETS, tie: 1_000_000_000 },
+    }
+    const tamperedOutcome = structuredClone(pending)
+    tamperedOutcome.result.winner =
+      tamperedOutcome.result.winner === 'tie' ? 'player' : 'tie'
+
+    expect(pendingRoundMatchesGame(game, overLimit)).toBe(false)
+    expect(pendingRoundMatchesGame(game, tamperedOutcome)).toBe(false)
+  })
+
+  it('rejects malformed persisted data without throwing', () => {
+    const { game, pending } = pendingFixture()
     const malformed = {
       version: 1,
       bets: null,
-      result: lockedResult,
+      result: pending.result,
     } as unknown as PersistedPendingRound
 
     expect(() => pendingRoundMatchesGame(game, malformed)).not.toThrow()

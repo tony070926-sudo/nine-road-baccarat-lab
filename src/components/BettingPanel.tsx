@@ -1,5 +1,8 @@
 import { CircleDollarSign, Eye, RotateCcw, Trash2 } from 'lucide-react'
-import { totalBets } from '../game/baccarat'
+import { ChipDragLayer } from './ChipDragLayer'
+import { ChipStackVisual } from './ChipStackVisual'
+import { TABLE_LIMITS, totalBets } from '../game/baccarat'
+import type { WagerChipLedger } from '../game/chipPhysics'
 import type { Bets, PlayMode } from '../types'
 
 const BET_LABELS: Record<keyof Bets, string> = {
@@ -26,14 +29,20 @@ const BET_OPTIONS: Array<{
 
 interface BettingPanelProps {
   bets: Bets
+  wagerChipLedger: WagerChipLedger
   balance: number
   selectedChip: number
   isDealing: boolean
+  isSettling: boolean
   dealingMode: PlayMode | null
   error: string | null
   hasLastBets: boolean
   onSelectChip: (chip: number) => void
-  onAddBet: (target: keyof Bets) => void
+  onAddBet: (
+    target: keyof Bets,
+    amount: number,
+    source: 'tap' | 'drag',
+  ) => boolean
   onClear: () => void
   onRepeat: () => void
   onFly: () => void
@@ -47,11 +56,17 @@ function formatPoints(value: number): string {
   }).format(value)
 }
 
+function formatCompactLimit(value: number): string {
+  return value >= 1_000 ? `${value / 1_000}K` : String(value)
+}
+
 export function BettingPanel({
   bets,
+  wagerChipLedger,
   balance,
   selectedChip,
   isDealing,
+  isSettling,
   dealingMode,
   error,
   hasLastBets,
@@ -65,7 +80,11 @@ export function BettingPanel({
   const stake = totalBets(bets)
 
   return (
-    <aside className="betting-panel casino-betting-layer" aria-label="模拟下注区">
+    <aside
+      className="betting-panel casino-betting-layer"
+      aria-label="模拟下注区"
+      data-betting-phase={isSettling ? 'settling' : isDealing ? 'locked' : 'betting'}
+    >
       <div className="felt-betting-heading">
         <div>
           <span className="dealer-call-dot" aria-hidden="true" />
@@ -78,34 +97,51 @@ export function BettingPanel({
       </div>
 
       <div className="bet-grid felt-bet-grid">
-        {BET_OPTIONS.map((option) => (
-          <button
-            key={option.key}
-            className={`bet-zone ${option.className} ${bets[option.key] > 0 ? 'has-bet' : ''}`}
-            onClick={() => onAddBet(option.key)}
-            disabled={isDealing}
-            aria-label={`下注${BET_LABELS[option.key]}，当前 ${bets[option.key]} 分`}
-          >
-            <span className="bet-zone-label">
-              {BET_LABELS[option.key]}
-              {option.key === 'player' && <small>PLAYER</small>}
-              {option.key === 'banker' && <small>BANKER</small>}
-              {option.key === 'tie' && <small>TIE</small>}
-            </span>
-            <span className="bet-zone-odds">{option.odds}</span>
-            {bets[option.key] > 0 && (
+        {BET_OPTIONS.map((option) => {
+          const limit = TABLE_LIMITS[option.key]
+          const limitLabel =
+            `${limit.min.toLocaleString('zh-CN')} 至 ` +
+            `${limit.max.toLocaleString('zh-CN')} 分，每次 ` +
+            `${limit.step.toLocaleString('zh-CN')} 分`
+
+          return (
+            <button
+              key={option.key}
+              className={`bet-zone ${option.className} ${bets[option.key] > 0 ? 'has-bet' : ''}`}
+              onClick={() => onAddBet(option.key, selectedChip, 'tap')}
+              disabled={isDealing}
+              data-bet-target={option.key}
+              data-chip-drop-target={option.key}
+              aria-label={`下注${BET_LABELS[option.key]}，当前 ${bets[option.key]} 分，限额 ${limitLabel}`}
+            >
+              <span className="bet-zone-label">
+                {BET_LABELS[option.key]}
+                {option.key === 'player' && <small>PLAYER</small>}
+                {option.key === 'banker' && <small>BANKER</small>}
+                {option.key === 'tie' && <small>TIE</small>}
+              </span>
+              <span className="bet-zone-meta">
+                <span className="bet-zone-odds">{option.odds}</span>
+                <small>
+                  限额 {formatCompactLimit(limit.min)}–{formatCompactLimit(limit.max)}
+                </small>
+              </span>
               <span
-                className="placed-chip table-chip-stack"
-                key={`${option.key}-${bets[option.key]}`}
+                className="table-chip-anchor"
+                data-chip-stack-anchor={option.key}
                 aria-hidden="true"
               >
-                <i />
-                <i />
-                <strong>{formatPoints(bets[option.key])}</strong>
+                {bets[option.key] > 0 && (
+                  <ChipStackVisual
+                    amount={bets[option.key]}
+                    chips={wagerChipLedger[option.key]}
+                    className="placed-chip table-chip-stack"
+                  />
+                )}
               </span>
-            )}
-          </button>
-        ))}
+            </button>
+          )
+        })}
       </div>
 
       <div className="player-rail">
@@ -124,21 +160,35 @@ export function BettingPanel({
           </button>
         </div>
 
-        <div>
-          <span className="chip-rack-label">选择筹码</span>
-          <div className="chip-rack" role="radiogroup" aria-label="选择筹码">
-            {CHIPS.map((chip, index) => (
-              <button
-                key={chip}
-                className={`chip chip-${index + 1} ${selectedChip === chip ? 'is-selected' : ''}`}
-                onClick={() => onSelectChip(chip)}
-                role="radio"
-                aria-checked={selectedChip === chip}
-                disabled={isDealing}
-              >
-                <span>{chip >= 1_000 ? `${chip / 1_000}K` : chip}</span>
-              </button>
-            ))}
+        <div className="chip-rack-console">
+          <div>
+            <span className="chip-rack-label">选择筹码</span>
+            <div className="chip-rack" role="radiogroup" aria-label="选择筹码">
+              {CHIPS.map((chip, index) => (
+                <button
+                  key={chip}
+                  className={`chip chip-${index + 1} ${selectedChip === chip ? 'is-selected' : ''}`}
+                  onClick={() => onSelectChip(chip)}
+                  role="radio"
+                  aria-checked={selectedChip === chip}
+                  disabled={isDealing}
+                >
+                  <span>{chip >= 1_000 ? `${chip / 1_000}K` : chip}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="physical-chip-drag-source">
+            <span>拖到下注区</span>
+            <ChipDragLayer
+              enabled={!isDealing}
+              selectedValue={selectedChip}
+              balance={balance}
+              currentBets={bets}
+              currentWagerChips={wagerChipLedger}
+              chipSize={42}
+              onDrop={(target, value) => onAddBet(target, value, 'drag')}
+            />
           </div>
         </div>
 
@@ -159,13 +209,27 @@ export function BettingPanel({
       </div>
 
       <div className="bet-summary table-bet-summary" aria-live="polite">
-        <span>
-          本局筹码 <strong>{formatPoints(stake)}</strong>
-        </span>
-        <span>
-          下注后可用 <strong>{formatPoints(balance - stake)}</strong>
-        </span>
-        <small>点击筹码，再点击桌面下注区</small>
+        {isSettling ? (
+          <>
+            <span>
+              本局筹码 <strong>{formatPoints(stake)}</strong>
+            </span>
+            <span>
+              结算后余额 <strong>{formatPoints(balance)}</strong>
+            </span>
+            <small>余额已提交，筹码动画仅展示结算过程</small>
+          </>
+        ) : (
+          <>
+            <span>
+              本局筹码 <strong>{formatPoints(stake)}</strong>
+            </span>
+            <span>
+              下注后可用 <strong>{formatPoints(balance - stake)}</strong>
+            </span>
+            <small>点击下注区，或拖动实体筹码</small>
+          </>
+        )}
       </div>
 
       {error && <p className="form-error table-form-error">{error}</p>}

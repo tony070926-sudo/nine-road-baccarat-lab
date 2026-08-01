@@ -60,6 +60,12 @@ export interface Settlement {
   totalStake: number
   totalReturned: number
   net: number
+  /**
+   * Optional for records created before commission was exported explicitly.
+   * New settlements always persist the amount deducted from a winning Banker
+   * wager.
+   */
+  commissionCharged?: number
   breakdown: Partial<Record<keyof Bets, number>>
 }
 

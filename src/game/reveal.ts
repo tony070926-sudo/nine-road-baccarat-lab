@@ -2,10 +2,17 @@ import type {
   Bets,
   Card,
   DealResult,
+  PendingRound,
   PersistedGameState,
   PersistedPendingRound,
   PlayMode,
+  ShoeState,
 } from '../types'
+import { dealRound } from './baccarat'
+import {
+  isPersistedGameState,
+  isPersistedPendingRound,
+} from './stateValidation'
 
 const OPENING_CARD_COUNT = 4
 export type RevealSide = 'player' | 'banker'
@@ -20,27 +27,51 @@ export function revealSideForCard(
 }
 
 /**
- * A player manually opens only the side covered by their wagers. Tie covers
- * both hands. Fly mode has no wagered side, so the dealer opens both hands.
+ * The single simulated seated player may squeeze only the hand covered by a
+ * main Player or Banker wager. Side-bet-only and fly rounds are dealer-opened.
  */
 export function manualRevealSides(
   bets: Bets,
   playMode: PlayMode,
 ): RevealSide[] {
   if (playMode === 'fly') return []
-  if (bets.tie > 0) return ['player', 'banker']
 
   const sides: RevealSide[] = []
-  if (bets.player > 0 || bets.playerPair > 0) sides.push('player')
-  if (bets.banker > 0 || bets.bankerPair > 0) sides.push('banker')
+  if (bets.player > 0) sides.push('player')
+  if (bets.banker > 0) sides.push('banker')
   return sides
+}
+
+/**
+ * Dealing and exposure are different physical procedures. This table follows
+ * the Macau-style exposure profile: the Player opening hand is exposed first,
+ * then the Banker opening hand, followed by any Player and Banker third cards.
+ */
+export function revealOrder(result: DealResult): Card[] {
+  return [
+    ...result.playerCards.slice(0, 2),
+    ...result.bankerCards.slice(0, 2),
+    ...result.playerCards.slice(2),
+    ...result.bankerCards.slice(2),
+  ]
+}
+
+/**
+ * The physical opening deal alternates Player and Banker. Keep this separate
+ * from revealOrder(), which intentionally groups the two Player cards before
+ * the two Banker cards for the table's Macau-style exposure procedure.
+ */
+export function openingDealCardIds(result: DealResult): string[] {
+  return result.dealOrder
+    .slice(0, OPENING_CARD_COUNT)
+    .map((card) => card.id)
 }
 
 export function nextRevealCard(
   result: DealResult,
   revealedCount: number,
 ): Card | null {
-  return result.dealOrder[revealedCount] ?? null
+  return revealOrder(result)[revealedCount] ?? null
 }
 
 /**
@@ -52,88 +83,118 @@ export function visibleRevealCardIds(
   result: DealResult,
   revealedCount: number,
 ): string[] {
-  const initialCount = Math.min(OPENING_CARD_COUNT, result.dealOrder.length)
+  const order = revealOrder(result)
+  const initialCount = Math.min(OPENING_CARD_COUNT, order.length)
   const visibleCount = Math.max(
     initialCount,
-    Math.min(result.dealOrder.length, revealedCount + 1),
+    Math.min(order.length, revealedCount + 1),
   )
-  return result.dealOrder.slice(0, visibleCount).map((card) => card.id)
+  return order.slice(0, visibleCount).map((card) => card.id)
 }
 
 export function revealedCards(
   result: DealResult,
   revealedCount: number,
 ): Card[] {
-  return result.dealOrder.slice(0, revealedCount)
+  return revealOrder(result).slice(0, revealedCount)
 }
 
 export function revealIsComplete(
   result: DealResult,
   revealedCount: number,
 ): boolean {
-  return revealedCount >= result.dealOrder.length
+  return revealedCount >= revealOrder(result).length
+}
+
+function cardsMatch(left: Card, right: Card): boolean {
+  return (
+    left.id === right.id &&
+    left.suit === right.suit &&
+    left.rank === right.rank &&
+    left.deck === right.deck
+  )
+}
+
+function cardArraysMatch(
+  left: readonly Card[],
+  right: readonly Card[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((card, index) => cardsMatch(card, right[index]))
+  )
+}
+
+function dealResultsMatch(left: DealResult, right: DealResult): boolean {
+  return (
+    cardArraysMatch(left.playerCards, right.playerCards) &&
+    cardArraysMatch(left.bankerCards, right.bankerCards) &&
+    cardArraysMatch(left.dealOrder, right.dealOrder) &&
+    left.playerTotal === right.playerTotal &&
+    left.bankerTotal === right.bankerTotal &&
+    left.winner === right.winner &&
+    left.natural === right.natural &&
+    left.playerPair === right.playerPair &&
+    left.bankerPair === right.bankerPair &&
+    left.cardsUsed === right.cardsUsed
+  )
+}
+
+function shoesMatch(left: ShoeState, right: ShoeState): boolean {
+  return (
+    left.id === right.id &&
+    cardArraysMatch(left.cards, right.cards) &&
+    left.cursor === right.cursor &&
+    left.cutAtRemaining === right.cutAtRemaining &&
+    cardsMatch(left.burnCard, right.burnCard) &&
+    left.burnedCards === right.burnedCards &&
+    left.handNumber === right.handNumber &&
+    left.shuffleVersion === right.shuffleVersion &&
+    left.needsShuffle === right.needsShuffle
+  )
+}
+
+export function pendingRoundsMatch(
+  left: PendingRound,
+  right: PendingRound,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.playMode === right.playMode &&
+    left.bets.player === right.bets.player &&
+    left.bets.banker === right.bets.banker &&
+    left.bets.tie === right.bets.tie &&
+    left.bets.playerPair === right.bets.playerPair &&
+    left.bets.bankerPair === right.bets.bankerPair &&
+    left.balanceBefore === right.balanceBefore &&
+    left.sourceShoeId === right.sourceShoeId &&
+    left.sourceCursor === right.sourceCursor &&
+    dealResultsMatch(left.result, right.result) &&
+    shoesMatch(left.shoeAfter, right.shoeAfter)
+  )
 }
 
 export function pendingRoundMatchesGame(
   game: PersistedGameState,
   pending: PersistedPendingRound,
 ): boolean {
-  if (
-    !pending ||
-    typeof pending !== 'object' ||
-    !pending.bets ||
-    typeof pending.bets !== 'object' ||
-    !pending.result ||
-    !Array.isArray(pending.result.dealOrder) ||
-    !Array.isArray(pending.result.playerCards) ||
-    !Array.isArray(pending.result.bankerCards) ||
-    !pending.shoeAfter ||
-    !Array.isArray(pending.shoeAfter.cards)
-  ) {
+  if (!isPersistedGameState(game) || !isPersistedPendingRound(pending)) {
     return false
   }
 
-  const betValues = [
-    pending.bets.player,
-    pending.bets.banker,
-    pending.bets.tie,
-    pending.bets.playerPair,
-    pending.bets.bankerPair,
-  ]
-  const betsAreValid = betValues.every(
-    (value) => Number.isFinite(value) && value >= 0,
-  )
-  const hasValidMode =
-    pending.playMode === 'bet' || pending.playMode === 'fly'
-  const dealLength = pending.result.dealOrder.length
-  const totalStake = betValues.reduce((total, value) => total + value, 0)
-  const modeMatchesStake =
-    (pending.playMode === 'fly' && totalStake === 0) ||
-    (pending.playMode === 'bet' && totalStake > 0)
+  let expectedRound: ReturnType<typeof dealRound>
+  try {
+    expectedRound = dealRound(game.shoe)
+  } catch {
+    return false
+  }
 
   return (
-    pending.version === 1 &&
-    Boolean(pending.id) &&
-    hasValidMode &&
-    betsAreValid &&
-    modeMatchesStake &&
-    Number.isFinite(pending.balanceBefore) &&
-    pending.balanceBefore >= 0 &&
     pending.balanceBefore === game.balance &&
     pending.sourceShoeId === game.shoe.id &&
-    Number.isInteger(pending.sourceCursor) &&
-    pending.sourceCursor >= 0 &&
     pending.sourceCursor === game.shoe.cursor &&
-    pending.shoeAfter.id === pending.sourceShoeId &&
-    pending.result.cardsUsed === dealLength &&
-    pending.shoeAfter.cursor ===
-      pending.sourceCursor + pending.result.cardsUsed &&
-    pending.shoeAfter.handNumber === game.shoe.handNumber + 1 &&
-    dealLength >= OPENING_CARD_COUNT &&
-    dealLength <= 6 &&
-    Number.isInteger(pending.revealedCount) &&
-    pending.revealedCount >= 0 &&
-    pending.revealedCount < dealLength &&
-    !game.history.some((record) => record.id === pending.id)
+    !game.history.some((record) => record.id === pending.id) &&
+    dealResultsMatch(pending.result, expectedRound.result) &&
+    shoesMatch(pending.shoeAfter, expectedRound.shoe)
   )
 }

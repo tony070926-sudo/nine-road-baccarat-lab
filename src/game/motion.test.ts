@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   DRAG_REVEAL_COMMIT_PROGRESS,
+  cappedMotionPoint,
+  dealContactDelayMs,
   dragRevealMetrics,
   isMatchingDealMotion,
   motionFallbackMs,
@@ -44,6 +46,29 @@ describe('deal motion token guards', () => {
   })
 })
 
+describe('dealer hand release geometry', () => {
+  it('caps the hand travel while preserving the direction toward the card', () => {
+    const release = cappedMotionPoint(
+      { x: 100, y: 80 },
+      { x: 400, y: 480 },
+      150,
+    )
+
+    expect(Math.hypot(release.x - 100, release.y - 80)).toBeCloseTo(150)
+    expect(release.x).toBeGreaterThan(100)
+    expect(release.y).toBeGreaterThan(80)
+  })
+
+  it('allows a nearby delivery and keeps a zero-distance hand stable', () => {
+    expect(
+      cappedMotionPoint({ x: 10, y: 20 }, { x: 40, y: 60 }, 80),
+    ).toEqual({ x: 40, y: 60 })
+    expect(
+      cappedMotionPoint({ x: 10, y: 20 }, { x: 10, y: 20 }, 80),
+    ).toEqual({ x: 10, y: 20 })
+  })
+})
+
 describe('newly visible deal cards', () => {
   it('returns newly exposed third cards in their locked deal order', () => {
     expect(
@@ -83,6 +108,12 @@ describe('motion fallback timing', () => {
     expect(motionFallbackMs('user')).toBeGreaterThan(
       motionFallbackMs('dealer'),
     )
+  })
+
+  it('places the card impact sound on the visual contact keyframe', () => {
+    expect(dealContactDelayMs(1_280)).toBe(669)
+    expect(dealContactDelayMs(393)).toBe(578)
+    expect(dealContactDelayMs(393, true)).toBe(0)
   })
 })
 

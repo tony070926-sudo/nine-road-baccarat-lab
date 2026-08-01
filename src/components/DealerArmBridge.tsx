@@ -3,7 +3,10 @@ import {
   useRef,
   type RefObject,
 } from 'react'
-import type { DealMotionToken } from '../game/motion'
+import {
+  cappedMotionPoint,
+  type DealMotionToken,
+} from '../game/motion'
 
 interface DealerArmBridgeProps {
   motion: DealMotionToken | null
@@ -15,7 +18,7 @@ interface Point {
   y: number
 }
 
-const ARM_BASE_LENGTH = 260
+const ARM_BASE_LENGTH = 220
 
 function vectorFrom(anchor: Point, point: Point) {
   const deltaX = point.x - anchor.x
@@ -60,20 +63,26 @@ function armStyle(
   rest: Point,
   shoe: Point,
   target: Point,
+  maximumReleaseTravel: number,
 ): Record<string, string | number> {
   const pull = {
     x: shoe.x + (anchor.x - shoe.x) * 0.08,
     y: shoe.y + (anchor.y - shoe.y) * 0.08,
   }
+  const release = cappedMotionPoint(
+    shoe,
+    target,
+    maximumReleaseTravel,
+  )
   const middle = {
-    x: shoe.x + (target.x - shoe.x) * 0.58,
-    y: shoe.y + (target.y - shoe.y) * 0.58 - 16,
+    x: shoe.x + (release.x - shoe.x) * 0.58,
+    y: shoe.y + (release.y - shoe.y) * 0.58 - 10,
   }
   const restVector = vectorFrom(anchor, rest)
   const shoeVector = vectorFrom(anchor, shoe)
   const pullVector = vectorFrom(anchor, pull)
   const middleVector = vectorFrom(anchor, middle)
-  const targetVector = vectorFrom(anchor, target)
+  const targetVector = vectorFrom(anchor, release)
 
   return {
     '--dealer-anchor-x': `${anchor.x}px`,
@@ -92,9 +101,11 @@ function armStyle(
 }
 
 /**
- * A stage-level sleeve keeps the moving hand visually connected to the dealer.
- * The card remains the animation completion source, so this layer never advances
- * game state and cannot produce a duplicate deal.
+ * A stage-level sleeve follows the dealer only through the draw and push. The
+ * card then leaves the fingers and slides the remaining distance over the felt,
+ * matching live-table delivery without stretching an artificial arm across the
+ * whole layout. The card remains the animation completion source, so this layer
+ * never advances game state and cannot produce a duplicate deal.
  */
 export function DealerArmBridge({
   motion,
@@ -132,7 +143,7 @@ export function DealerArmBridge({
       target.getBoundingClientRect(),
       stageRect,
     )
-    const wristOffset = mobile ? 45 : 68
+    const wristOffset = mobile ? 132 : 175
     const shoeWrist = {
       x: shoeCenter.x - (mobile ? 8 : 12),
       y: shoeCenter.y - wristOffset,
@@ -142,7 +153,13 @@ export function DealerArmBridge({
       y: targetCenter.y - wristOffset,
     }
 
-    const style = armStyle(anchor, rest, shoeWrist, targetWrist)
+    const style = armStyle(
+      anchor,
+      rest,
+      shoeWrist,
+      targetWrist,
+      mobile ? 92 : Math.min(158, stageRect.width * 0.135),
+    )
     Object.entries(style).forEach(([name, value]) => {
       bridge.style.setProperty(name, String(value))
     })

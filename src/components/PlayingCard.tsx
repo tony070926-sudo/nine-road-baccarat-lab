@@ -13,6 +13,7 @@ import { casinoAudio } from '../audio/casinoAudio'
 import { cardLabel } from '../game/cards'
 import {
   DRAG_REVEAL_COMMIT_PROGRESS,
+  cappedMotionPoint,
   dragRevealMetrics,
   squeezeVisualFrame,
   type DealMotionToken,
@@ -68,11 +69,14 @@ interface RevealPlayingCardProps {
   isAutomatic: boolean
   willAutoFlip: boolean
   isPlaced: boolean
+  parkedForThirdCard: boolean
   dealMotion: DealMotionToken | null
-  onFlip: (cardId: string) => void
+  onFlip: (cardId: string, inputMethod: RevealInputMethod) => void
   onFlipComplete: (cardId: string) => void
   onDealComplete: (motion: DealMotionToken) => void
 }
+
+export type RevealInputMethod = 'pointer' | 'keyboard'
 
 interface ActiveDragGesture {
   pointerId: number
@@ -103,6 +107,7 @@ export function RevealPlayingCard({
   isAutomatic,
   willAutoFlip,
   isPlaced,
+  parkedForThirdCard,
   dealMotion,
   onFlip,
   onFlipComplete,
@@ -122,6 +127,7 @@ export function RevealPlayingCard({
     'none' | 'pointer' | 'keyboard' | 'dealer'
   >('none')
   const reboundTimerRef = useRef<number | null>(null)
+  const gestureSequenceRef = useRef(0)
 
   useEffect(
     () => () => {
@@ -145,17 +151,47 @@ export function RevealPlayingCard({
     cardElement.style.animation = 'none'
     const cardRect = cardElement.getBoundingClientRect()
     const shoeRect = shoe.getBoundingClientRect()
-    const fromX =
-      shoeRect.left + shoeRect.width / 2 - (cardRect.left + cardRect.width / 2)
-    const fromY =
-      shoeRect.top + shoeRect.height / 2 - (cardRect.top + cardRect.height / 2)
+    const shoeCenter = {
+      x: shoeRect.left + shoeRect.width / 2,
+      y: shoeRect.top + shoeRect.height / 2,
+    }
+    const targetCenter = {
+      x: cardRect.left + cardRect.width / 2,
+      y: cardRect.top + cardRect.height / 2,
+    }
+    const fromX = shoeCenter.x - targetCenter.x
+    const fromY = shoeCenter.y - targetCenter.y
+    const stageWidth =
+      cardElement.closest<HTMLElement>('.casino-table-stage')
+        ?.getBoundingClientRect().width ?? window.innerWidth
+    const maximumReleaseTravel =
+      stageWidth <= 760 ? 92 : Math.min(158, stageWidth * 0.135)
+    const releasePoint = cappedMotionPoint(
+      shoeCenter,
+      targetCenter,
+      maximumReleaseTravel,
+    )
+    const releaseX = releasePoint.x - targetCenter.x
+    const releaseY = releasePoint.y - targetCenter.y
+    const glidePoint = {
+      x: releasePoint.x + (targetCenter.x - releasePoint.x) * 0.62,
+      y: releasePoint.y + (targetCenter.y - releasePoint.y) * 0.62 - 8,
+    }
 
     cardElement.style.setProperty('--deal-from-x', `${fromX}px`)
     cardElement.style.setProperty('--deal-from-y', `${fromY}px`)
     cardElement.style.setProperty('--deal-pull-x', `${fromX * 0.96}px`)
     cardElement.style.setProperty('--deal-pull-y', `${fromY * 0.96 - 8}px`)
-    cardElement.style.setProperty('--deal-mid-x', `${fromX * 0.42}px`)
-    cardElement.style.setProperty('--deal-mid-y', `${fromY * 0.42 - 16}px`)
+    cardElement.style.setProperty('--deal-release-x', `${releaseX}px`)
+    cardElement.style.setProperty('--deal-release-y', `${releaseY - 7}px`)
+    cardElement.style.setProperty(
+      '--deal-mid-x',
+      `${glidePoint.x - targetCenter.x}px`,
+    )
+    cardElement.style.setProperty(
+      '--deal-mid-y',
+      `${glidePoint.y - targetCenter.y}px`,
+    )
     void cardElement.offsetWidth
     if (inlineAnimation) {
       cardElement.style.animation = inlineAnimation
@@ -330,17 +366,19 @@ export function RevealPlayingCard({
     ) {
       setIsDragCommit(true)
       setInputMethod('pointer')
+      gestureSequenceRef.current += 1
       casinoAudio.playSqueezeRelease(
-        `${card.id}:squeeze:commit:${performance.now()}`,
+        `${card.id}:squeeze:commit:${gestureSequenceRef.current}`,
         side,
         true,
       )
-      onFlip(card.id)
+      onFlip(card.id, 'pointer')
       return
     }
 
+    gestureSequenceRef.current += 1
     casinoAudio.playSqueezeRelease(
-      `${card.id}:squeeze:rebound:${performance.now()}`,
+      `${card.id}:squeeze:rebound:${gestureSequenceRef.current}`,
       side,
       false,
     )
@@ -388,7 +426,7 @@ export function RevealPlayingCard({
     dragProgressRef.current = 0
     setDragVisual(IDLE_DRAG_VISUAL)
     setInputMethod('keyboard')
-    onFlip(card.id)
+    onFlip(card.id, 'keyboard')
   }
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -413,6 +451,8 @@ export function RevealPlayingCard({
         willAutoFlip ? 'will-auto-flip' : ''
       } ${isPlaced ? 'is-placed' : 'is-waiting-deal'} ${
         dealMotion ? 'is-being-dealt' : ''
+      } ${
+        parkedForThirdCard ? 'is-parked-for-third-card' : ''
       }`}
       style={
         {
@@ -460,7 +500,9 @@ export function RevealPlayingCard({
       onAnimationEnd={handleCardAnimationEnd}
       disabled={!interactive}
       aria-label={
-        dealMotion
+        parkedForThirdCard
+          ? `${sideLabel}首两张牌已收拢，第三张单独开牌`
+          : dealMotion
           ? `荷官正在发出${sideLabel}第 ${index + 1} 张牌`
           : faceUp
           ? `${sideLabel}第 ${index + 1} 张，${cardLabel(card)}`
@@ -474,12 +516,14 @@ export function RevealPlayingCard({
       tabIndex={interactive ? 0 : -1}
       data-reveal-card-id={card.id}
       data-deal-sequence={dealMotion?.sequence}
+      data-deal-index={dealIndex}
       data-reveal-progress={dragVisual.progress.toFixed(3)}
       data-gesture-state={gestureState}
       data-squeeze-corner={
         isDragging || isRebounding || isDragCommit ? squeezeCorner : 'none'
       }
       data-input-method={inputMethod}
+      data-opening-cards-parked={parkedForThirdCard}
     >
       <span
         className="reveal-card-inner"
@@ -540,17 +584,6 @@ export function RevealPlayingCard({
 
       {(canFlip || (isFlipping && !isAutomatic)) && (
         <>
-          <span
-            className={`card-reveal-hand card-reveal-hand-${side}`}
-            aria-hidden="true"
-          >
-            <img
-              src="/assets/card-reveal-hand-v2.webp"
-              alt=""
-              draggable="false"
-              decoding="async"
-            />
-          </span>
           <span className="squeeze-hand squeeze-hand-under" aria-hidden="true">
             <img
               src="/assets/card-reveal-hand-v2.webp"

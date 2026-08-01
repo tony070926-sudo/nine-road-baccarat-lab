@@ -68,6 +68,7 @@ export function HistoryTable({ history, onExportCsv, onExportJson }: HistoryTabl
                 <th scope="col">庄家</th>
                 <th scope="col">标记</th>
                 <th scope="col">投注</th>
+                <th scope="col">庄佣</th>
                 <th scope="col">净输赢</th>
                 <th scope="col">结余</th>
                 <th scope="col">时间</th>
@@ -107,6 +108,12 @@ export function HistoryTable({ history, onExportCsv, onExportJson }: HistoryTabl
                     </span>
                   </td>
                   <td>{formatNumber(record.settlement.totalStake)}</td>
+                  <td>
+                    {formatNumber(
+                      record.settlement.commissionCharged ??
+                        (record.winner === 'banker' ? record.bets.banker * 0.05 : 0),
+                    )}
+                  </td>
                   <td className={record.settlement.net >= 0 ? 'is-positive' : 'is-negative'}>
                     {record.settlement.net > 0 ? '+' : ''}
                     {formatNumber(record.settlement.net)}

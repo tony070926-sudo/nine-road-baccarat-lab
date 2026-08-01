@@ -1,4 +1,5 @@
 import type { CrowdCheerTone } from '../game/crowdCheer'
+import type { SettlementActionKind } from '../game/settlementMotion'
 import type { Winner } from '../types'
 import {
   crowdIntensity,
@@ -36,15 +37,17 @@ interface AudioGraph {
   compressor: DynamicsCompressorNode
 }
 
-class CasinoAudioDirector {
+export class CasinoAudioDirector {
   private graph: AudioGraph | null = null
   private enabled = false
   private ambientSource: AudioBufferSourceNode | null = null
   private ambientLfo: OscillatorNode | null = null
   private ambientLfoGain: GainNode | null = null
   private noiseBuffer: AudioBuffer | null = null
+  private noiseBufferContext: AudioContext | null = null
   private recentEventIds: string[] = []
   private recentEventSet = new Set<string>()
+  private pendingEventIds = new Set<string>()
   private lastSqueezeAt = 0
   private pageVisible = true
   private lifecycleEpoch = 0
@@ -52,6 +55,10 @@ class CasinoAudioDirector {
   private suspendPromise: Promise<void> | null = null
 
   setEnabled(enabled: boolean) {
+    if (!enabled) {
+      this.cancelDealerCall()
+    }
+
     if (this.enabled === enabled) {
       saveAudioPreference(enabled)
       return
@@ -131,6 +138,10 @@ class CasinoAudioDirector {
   }
 
   async setPageVisible(visible: boolean) {
+    if (!visible) {
+      this.cancelDealerCall()
+    }
+
     if (this.pageVisible === visible) return
 
     this.pageVisible = visible
@@ -151,9 +162,14 @@ class CasinoAudioDirector {
     }
   }
 
-  playChip(eventId: string, side: AudioSide = 'center') {
-    this.schedule(eventId, (graph) => {
-      const now = graph.context.currentTime
+  playChip(
+    eventId: string,
+    side: AudioSide = 'center',
+    delayMs = 0,
+  ) {
+    this.schedule(eventId, (graph, requestedAt) => {
+      const now =
+        requestedAt + Math.max(0, delayMs) / 1_000
       const pan = panForSide(side)
       ;[690, 930, 1_270].forEach((frequency, index) => {
         const oscillator = graph.context.createOscillator()
@@ -219,9 +235,14 @@ class CasinoAudioDirector {
     })
   }
 
-  playCardLand(eventId: string, side: Exclude<AudioSide, 'center'>) {
-    this.schedule(eventId, (graph) => {
-      const now = graph.context.currentTime
+  playCardLand(
+    eventId: string,
+    side: Exclude<AudioSide, 'center'>,
+    delayMs = 0,
+  ) {
+    this.schedule(eventId, (graph, requestedAt) => {
+      const now =
+        requestedAt + Math.max(0, delayMs) / 1_000
       const pan = panForSide(side)
       this.noiseBurst(graph, now, 0.055, 780, pan, 0.06)
       this.tone(graph, now, 118, 0.065, pan, 0.04)
@@ -312,8 +333,49 @@ class CasinoAudioDirector {
       })
 
       this.noiseBurst(graph, now + 0.2, 0.04, 2_600, resultPan, 0.035)
-      if (!fly && net !== 0) {
-        this.playChip(`${eventId}:chips`, net > 0 ? 'player' : 'banker')
+    })
+  }
+
+  playSettlementStep(
+    eventId: string,
+    kind: SettlementActionKind,
+    side: AudioSide,
+    delayMs = 0,
+  ) {
+    this.schedule(eventId, (graph, requestedAt) => {
+      const start =
+        requestedAt + Math.max(0, delayMs) / 1_000
+      const targetPan = panForSide(side)
+      const firstPan = kind === 'pay' ? 0 : targetPan
+      const finalPan = kind === 'collect' ? 0 : targetPan
+      const volume = kind === 'push' ? 0.034 : 0.05
+
+      this.noiseBurst(graph, start, 0.038, 2_650, firstPan, volume * 0.72)
+      this.tone(
+        graph,
+        start + 0.008,
+        kind === 'collect' ? 760 : kind === 'pay' ? 980 : 690,
+        0.055,
+        firstPan,
+        volume,
+      )
+      this.tone(
+        graph,
+        start + 0.052,
+        kind === 'collect' ? 610 : kind === 'pay' ? 840 : 650,
+        0.06,
+        finalPan,
+        volume * 0.72,
+      )
+      if (kind !== 'push') {
+        this.noiseBurst(
+          graph,
+          start + 0.046,
+          0.034,
+          3_100,
+          finalPan,
+          volume * 0.42,
+        )
       }
     })
   }
@@ -324,6 +386,48 @@ class CasinoAudioDirector {
       this.noiseBurst(graph, now, 0.22, 1_300, 0.25, 0.06)
       this.noiseBurst(graph, now + 0.11, 0.18, 1_850, -0.2, 0.045)
     })
+  }
+
+  playDealerCall(eventId: string, text: string) {
+    const message = text.trim()
+    const dealerEventId = `dealer-call:${eventId}`
+    if (
+      !message ||
+      !this.enabled ||
+      !this.pageVisible ||
+      typeof window === 'undefined' ||
+      typeof SpeechSynthesisUtterance === 'undefined' ||
+      this.recentEventSet.has(dealerEventId)
+    ) {
+      return
+    }
+
+    try {
+      const synthesis = window.speechSynthesis
+      if (
+        !synthesis ||
+        typeof synthesis.speak !== 'function' ||
+        typeof synthesis.cancel !== 'function'
+      ) {
+        return
+      }
+
+      const utterance = new SpeechSynthesisUtterance(message)
+      utterance.lang = 'zh-CN'
+      utterance.rate = 0.86
+      utterance.pitch = 0.72
+      utterance.volume = 0.58
+      const chineseVoice = synthesis
+        .getVoices()
+        .find((voice) => voice.lang.toLowerCase().startsWith('zh'))
+      if (chineseVoice) utterance.voice = chineseVoice
+
+      synthesis.cancel()
+      synthesis.speak(utterance)
+      this.rememberEvent(dealerEventId)
+    } catch {
+      // Speech synthesis is an optional enhancement; table audio stays usable.
+    }
   }
 
   playSqueeze(side: Exclude<AudioSide, 'center'>, progress: number) {
@@ -372,30 +476,51 @@ class CasinoAudioDirector {
     })
   }
 
-  private schedule(eventId: string, render: (graph: AudioGraph) => void) {
+  private schedule(
+    eventId: string,
+    render: (graph: AudioGraph, requestedAt: number) => void,
+  ) {
     if (
       !this.enabled ||
       !this.pageVisible ||
-      this.recentEventSet.has(eventId)
+      this.recentEventSet.has(eventId) ||
+      this.pendingEventIds.has(eventId)
     ) {
       return
     }
 
+    const requestedContext =
+      this.graph?.context.state === 'closed' ? null : this.graph?.context
+    const requestedAt = requestedContext?.currentTime ?? null
     const epoch = this.lifecycleEpoch
-    void this.unlock().then((ready) => {
-      if (
-        !ready ||
-        !this.enabled ||
-        !this.pageVisible ||
-        epoch !== this.lifecycleEpoch ||
-        this.recentEventSet.has(eventId) ||
-        !this.graph
-      ) {
-        return
+    this.pendingEventIds.add(eventId)
+    void (async () => {
+      try {
+        const ready = await this.unlock()
+        const graph = this.graph
+        if (
+          !ready ||
+          !this.enabled ||
+          !this.pageVisible ||
+          epoch !== this.lifecycleEpoch ||
+          this.recentEventSet.has(eventId) ||
+          !graph
+        ) {
+          return
+        }
+
+        const renderAt =
+          requestedAt !== null && requestedContext === graph.context
+            ? requestedAt
+            : graph.context.currentTime
+        this.rememberEvent(eventId)
+        render(graph, renderAt)
+      } catch {
+        // Web Audio is optional; a failed node must not reject into the UI.
+      } finally {
+        this.pendingEventIds.delete(eventId)
       }
-      this.rememberEvent(eventId)
-      render(this.graph)
-    })
+    })()
   }
 
   private rememberEvent(eventId: string) {
@@ -407,7 +532,37 @@ class CasinoAudioDirector {
     if (oldest) this.recentEventSet.delete(oldest)
   }
 
+  private cancelDealerCall() {
+    if (typeof window === 'undefined') return
+    try {
+      window.speechSynthesis?.cancel()
+    } catch {
+      // Browsers may expose speechSynthesis before the implementation is ready.
+    }
+  }
+
   private ensureGraph(): AudioGraph {
+    if (this.graph?.context.state === 'closed') {
+      const closedGraph = this.graph
+      this.stopAmbient()
+      ;[
+        closedGraph.effects,
+        closedGraph.ambient,
+        closedGraph.compressor,
+        closedGraph.master,
+      ].forEach((node) => {
+        try {
+          node.disconnect()
+        } catch {
+          // A closed context may have already detached its graph.
+        }
+      })
+      this.graph = null
+      this.noiseBuffer = null
+      this.noiseBufferContext = null
+      this.suspendPromise = null
+    }
+
     if (this.graph) return this.graph
 
     const AudioContextConstructor =
@@ -443,7 +598,9 @@ class CasinoAudioDirector {
   }
 
   private ensureNoiseBuffer(context: AudioContext): AudioBuffer {
-    if (this.noiseBuffer) return this.noiseBuffer
+    if (this.noiseBuffer && this.noiseBufferContext === context) {
+      return this.noiseBuffer
+    }
 
     const length = Math.ceil(context.sampleRate * 1.4)
     const buffer = context.createBuffer(1, length, context.sampleRate)
@@ -459,6 +616,7 @@ class CasinoAudioDirector {
       data[index] = previous
     }
     this.noiseBuffer = buffer
+    this.noiseBufferContext = context
     return buffer
   }
 
@@ -500,9 +658,17 @@ class CasinoAudioDirector {
     } catch {
       // Nodes may already be stopped after a visibility transition.
     }
-    this.ambientSource?.disconnect()
-    this.ambientLfo?.disconnect()
-    this.ambientLfoGain?.disconnect()
+    ;[
+      this.ambientSource,
+      this.ambientLfo,
+      this.ambientLfoGain,
+    ].forEach((node) => {
+      try {
+        node?.disconnect()
+      } catch {
+        // Closed contexts can reject redundant disconnect operations.
+      }
+    })
     this.ambientSource = null
     this.ambientLfo = null
     this.ambientLfoGain = null
@@ -540,7 +706,7 @@ class CasinoAudioDirector {
 
   private fadeMaster(target: number) {
     const graph = this.graph
-    if (!graph) return
+    if (!graph || graph.context.state === 'closed') return
     const now = graph.context.currentTime
     graph.master.gain.cancelScheduledValues(now)
     graph.master.gain.setValueAtTime(graph.master.gain.value, now)
