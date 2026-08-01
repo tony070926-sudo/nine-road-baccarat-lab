@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [react()],
   build: {
     target: 'es2022',
-    sourcemap: true,
+    // Keep production sources out of the public Pages artifact. If private
+    // error tracking is added later, upload a hidden map outside `dist`.
+    sourcemap: false,
   },
 })

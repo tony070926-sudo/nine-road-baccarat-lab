@@ -6,5 +6,7 @@ coverage
 playwright-report
 test-results
 output/playwright
+tmp/imagegen
 .playwright-cli
+.node-version.local
 *.local

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>页面未找到 · 九点牌靴</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        background: #031a15;
+        color: #f6ebc5;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at 50% 22%, rgb(216 177 90 / 16%), transparent 34rem),
+          linear-gradient(145deg, #062820, #020c0a 72%);
+      }
+
+      main {
+        width: min(34rem, calc(100% - 2rem));
+        box-sizing: border-box;
+        padding: 2.5rem;
+        border: 1px solid rgb(220 184 101 / 35%);
+        border-radius: 1.25rem;
+        background: rgb(2 18 15 / 82%);
+        box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 45%);
+        text-align: center;
+      }
+
+      .code {
+        margin: 0;
+        color: #d7b664;
+        font: 600 clamp(3rem, 14vw, 6rem) / 1 Georgia, serif;
+        letter-spacing: 0.08em;
+      }
+
+      h1 {
+        margin: 1rem 0 0.75rem;
+        font-size: clamp(1.4rem, 5vw, 2rem);
+      }
+
+      p {
+        margin: 0 0 1.5rem;
+        color: #c7d8d1;
+        line-height: 1.7;
+      }
+
+      a {
+        display: inline-flex;
+        min-height: 2.75rem;
+        align-items: center;
+        justify-content: center;
+        padding: 0 1.25rem;
+        border: 1px solid #d7b664;
+        border-radius: 999px;
+        color: #061b16;
+        background: #d7b664;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      a:focus-visible {
+        outline: 3px solid #fff;
+        outline-offset: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="code" aria-hidden="true">404</p>
+      <h1>这张牌不在牌靴里</h1>
+      <p>请求的页面或资源不存在。返回模拟牌桌后，可以继续上一局本机记录。</p>
+      <a href="/">返回九点牌靴</a>
+    </main>
+  </body>
+</html>

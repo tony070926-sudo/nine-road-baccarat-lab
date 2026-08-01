@@ -3,6 +3,7 @@ import {
   DRAG_REVEAL_COMMIT_PROGRESS,
   cappedMotionPoint,
   dealContactDelayMs,
+  dealMotionConfig,
   dragRevealMetrics,
   isMatchingDealMotion,
   motionFallbackMs,
@@ -102,6 +103,25 @@ describe('newly visible deal cards', () => {
 })
 
 describe('motion fallback timing', () => {
+  it('shares viewport-specific duration and release travel as one config', () => {
+    expect(dealMotionConfig(393)).toEqual({
+      durationMs: 760,
+      maximumReleaseTravel: 92,
+    })
+    expect(dealMotionConfig(760)).toEqual({
+      durationMs: 760,
+      maximumReleaseTravel: 92,
+    })
+
+    const narrowDesktop = dealMotionConfig(761)
+    expect(narrowDesktop.durationMs).toBe(880)
+    expect(narrowDesktop.maximumReleaseTravel).toBeCloseTo(102.735)
+    expect(dealMotionConfig(1_280)).toEqual({
+      durationMs: 880,
+      maximumReleaseTravel: 158,
+    })
+  })
+
   it('allows a player squeeze longer than a dealer deal', () => {
     expect(motionFallbackMs('dealer')).toBe(1_400)
     expect(motionFallbackMs('user')).toBe(2_800)

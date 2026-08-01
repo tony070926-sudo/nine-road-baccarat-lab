@@ -14,7 +14,37 @@ const USER_MOTION_FALLBACK_MS = 2_800
 
 export const DESKTOP_DEAL_MOTION_MS = 880
 export const MOBILE_DEAL_MOTION_MS = 760
+export const DEAL_MOTION_MOBILE_MAX_WIDTH = 760
+export const MOBILE_DEAL_RELEASE_TRAVEL_PX = 92
+export const DESKTOP_DEAL_RELEASE_TRAVEL_PX = 158
+export const DESKTOP_DEAL_RELEASE_TRAVEL_RATIO = 0.135
 export const DEAL_CONTACT_PROGRESS = 0.76
+
+export interface DealMotionConfig {
+  durationMs: number
+  maximumReleaseTravel: number
+}
+
+/**
+ * Keep the card and stage-level dealer rig on the same viewport-specific
+ * timing and physical hand-travel limits. The desktop reach scales on narrow
+ * stages before reaching its cap; mobile uses a shorter fixed release reach.
+ */
+export function dealMotionConfig(viewportWidth: number): DealMotionConfig {
+  const mobile = viewportWidth <= DEAL_MOTION_MOBILE_MAX_WIDTH
+
+  return {
+    durationMs: mobile
+      ? MOBILE_DEAL_MOTION_MS
+      : DESKTOP_DEAL_MOTION_MS,
+    maximumReleaseTravel: mobile
+      ? MOBILE_DEAL_RELEASE_TRAVEL_PX
+      : Math.min(
+          DESKTOP_DEAL_RELEASE_TRAVEL_PX,
+          viewportWidth * DESKTOP_DEAL_RELEASE_TRAVEL_RATIO,
+        ),
+  }
+}
 
 export const DRAG_REVEAL_COMMIT_PROGRESS = 0.62
 export type SqueezeCorner = 'left' | 'right'
@@ -173,7 +203,6 @@ export function dealContactDelayMs(
   reducedMotion = false,
 ): number {
   if (reducedMotion) return 0
-  const duration =
-    viewportWidth <= 760 ? MOBILE_DEAL_MOTION_MS : DESKTOP_DEAL_MOTION_MS
+  const { durationMs: duration } = dealMotionConfig(viewportWidth)
   return Math.round(duration * DEAL_CONTACT_PROGRESS)
 }

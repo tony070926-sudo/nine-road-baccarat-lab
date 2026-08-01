@@ -935,6 +935,8 @@ main {
   --deal-release-y: -150px;
   --deal-mid-x: 0px;
   --deal-mid-y: -92px;
+  --deal-near-x: 0px;
+  --deal-near-y: -22px;
   --deal-angle: -7deg;
   --reveal-progress: 0;
   --reveal-angle: 0deg;
@@ -1026,10 +1028,6 @@ main {
 
 .reveal-card.is-being-dealt::after {
   animation: dealer-card-contact-shadow var(--deal-motion-duration) cubic-bezier(0.16, 0.76, 0.18, 1) both;
-}
-
-.reveal-card.is-being-dealt .reveal-card-inner {
-  animation: dealer-card-contact-compression var(--deal-motion-duration) cubic-bezier(0.16, 0.76, 0.18, 1) both;
 }
 
 .reveal-card.can-flip {
@@ -1173,11 +1171,21 @@ main {
 }
 
 .reveal-card.is-user-flipping.is-drag-commit {
-  animation: player-card-drag-lift 520ms cubic-bezier(0.18, 0.78, 0.18, 1) both;
+  animation: player-card-drag-lift 430ms cubic-bezier(0.18, 0.78, 0.18, 1) both;
 }
 
 .reveal-card.is-user-flipping.is-drag-commit .reveal-card-inner {
-  animation: player-card-drag-complete 520ms cubic-bezier(0.16, 0.82, 0.2, 1) both;
+  animation: player-card-drag-complete 430ms cubic-bezier(0.16, 0.82, 0.2, 1) both;
+}
+
+.reveal-card.is-user-flipping.is-drag-commit.squeeze-corner-left
+  .reveal-card-inner {
+  transform-origin: bottom left;
+}
+
+.reveal-card.is-user-flipping.is-drag-commit.squeeze-corner-right
+  .reveal-card-inner {
+  transform-origin: bottom right;
 }
 
 .reveal-card.is-rebounding {
@@ -1269,7 +1277,7 @@ main {
 }
 
 .reveal-card.is-user-flipping.is-drag-commit .squeeze-stack {
-  animation: squeeze-stack-commit 160ms ease-out both;
+  animation: squeeze-stack-commit 300ms ease-out both;
 }
 
 .reveal-card.is-rebounding .squeeze-stack {
@@ -1403,8 +1411,8 @@ main {
   position: absolute;
   z-index: 16;
   left: 50%;
-  bottom: -250px;
-  width: clamp(300px, 24vw, 350px);
+  bottom: -205px;
+  width: clamp(176px, 16vw, 218px);
   max-width: none;
   pointer-events: none;
   user-select: none;
@@ -1435,14 +1443,14 @@ main {
 }
 
 .reveal-card.is-user-flipping .card-reveal-hand {
-  animation: player-hand-reveal 1.08s cubic-bezier(0.2, 0.68, 0.16, 1) both;
+  animation: player-hand-reveal 880ms cubic-bezier(0.2, 0.68, 0.16, 1) both;
 }
 
 .squeeze-hand {
   position: absolute;
   left: var(--squeeze-hand-left);
-  bottom: -122px;
-  width: clamp(168px, 17vw, 218px);
+  bottom: -190px;
+  width: clamp(150px, 14vw, 190px);
   max-width: none;
   pointer-events: none;
   user-select: none;
@@ -1503,7 +1511,7 @@ main {
 }
 
 .reveal-card.is-user-flipping.is-drag-commit .squeeze-hand {
-  animation: squeeze-hand-commit 240ms ease-out both;
+  animation: squeeze-hand-commit 300ms ease-out both;
 }
 
 .dealer-motion-hand {
@@ -2857,22 +2865,22 @@ footer p {
 
 @keyframes dealer-card-place {
   0%,
-  14% {
+  12% {
     opacity: 1;
     transform:
       translate3d(var(--deal-from-x), var(--deal-from-y), 0)
       translateX(calc(var(--card-index) * -12px))
       rotate(var(--deal-angle))
-      scale(0.89);
+      scale(0.94);
   }
 
-  22% {
+  26% {
     opacity: 1;
     transform:
       translate3d(var(--deal-pull-x), var(--deal-pull-y), 0)
       translateX(calc(var(--card-index) * -12px))
       rotate(var(--deal-angle))
-      scale(0.93);
+      scale(0.965);
   }
 
   40%,
@@ -2882,7 +2890,7 @@ footer p {
       translate3d(var(--deal-release-x), var(--deal-release-y), 0)
       translateX(calc(var(--card-index) * -12px))
       rotate(var(--deal-angle))
-      scale(0.985);
+      scale(0.99);
   }
 
   64% {
@@ -2891,28 +2899,34 @@ footer p {
       translate3d(var(--deal-mid-x), var(--deal-mid-y), 0)
       translateX(calc(var(--card-index) * -12px))
       rotate(-1deg)
-      scale(1.012);
+      scale(0.997);
   }
 
   76% {
     opacity: 1;
     transform:
-      translate3d(0, 6px, 0)
+      translate3d(var(--deal-near-x), var(--deal-near-y), 0)
       translateX(calc(var(--card-index) * -12px))
       rotate(calc((var(--card-index) - 1) * 1.5deg))
-      scale(1.006, 0.982);
+      scale(1);
   }
 
-  84% {
+  88% {
     opacity: 1;
     transform:
-      translate3d(0, -2px, 0)
+      translate3d(1px, 0.5px, 0)
       translateX(calc(var(--card-index) * -12px))
       rotate(calc((var(--card-index) - 1) * 1.5deg))
-      scale(0.998, 1.006);
   }
 
-  90%,
+  95% {
+    opacity: 1;
+    transform:
+      translate3d(-0.4px, 0, 0)
+      translateX(calc(var(--card-index) * -12px))
+      rotate(calc((var(--card-index) - 1) * 1.5deg));
+  }
+
   100% {
     opacity: 1;
     transform: translateX(calc(var(--card-index) * -12px))
@@ -2920,20 +2934,156 @@ footer p {
   }
 }
 
-@keyframes dealer-card-contact-compression {
-  0%,
-  68% {
-    transform: translateY(0) scale(1);
+@keyframes dealer-rig-deal-path {
+  0% {
+    opacity: 0;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-rest-angle))
+      scaleY(var(--dealer-rig-rest-reach));
   }
-  76% {
-    transform: translateY(1px) scale(1.012, 0.986);
+  8% {
+    opacity: 0.96;
   }
-  84% {
-    transform: translateY(-1px) scale(0.998, 1.006);
+  12% {
+    opacity: 1;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-approach-angle))
+      scaleY(var(--dealer-rig-approach-reach));
+  }
+  26% {
+    opacity: 1;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-pull-angle))
+      scaleY(var(--dealer-rig-pull-reach));
+  }
+  40% {
+    opacity: 1;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-middle-angle))
+      scaleY(var(--dealer-rig-middle-reach));
+  }
+  48%,
+  52% {
+    opacity: 1;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-target-angle))
+      scaleY(var(--dealer-rig-target-reach));
+  }
+  66% {
+    opacity: 0.84;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-middle-angle))
+      scaleY(var(--dealer-rig-middle-reach));
+  }
+  82%,
+  100% {
+    opacity: 0;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-rest-angle))
+      scaleY(var(--dealer-rig-rest-reach));
+  }
+}
+
+@keyframes dealer-rig-reveal-path {
+  0% {
+    opacity: 0;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-rest-angle))
+      scaleY(var(--dealer-rig-rest-reach));
+  }
+  18% {
+    opacity: 1;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-approach-angle))
+      scaleY(var(--dealer-rig-approach-reach));
+  }
+  32%,
+  70% {
+    opacity: 1;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-target-angle))
+      scaleY(var(--dealer-rig-target-reach));
+  }
+  78% {
+    opacity: 0.72;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-middle-angle))
+      scaleY(var(--dealer-rig-middle-reach));
   }
   100% {
-    transform: translateY(0) scale(1);
+    opacity: 0;
+    transform:
+      translate3d(var(--dealer-rig-anchor-x), var(--dealer-rig-anchor-y), 0)
+      rotate(var(--dealer-rig-rest-angle))
+      scaleY(var(--dealer-rig-rest-reach));
   }
+}
+
+@keyframes dealer-rig-deal-grasp {
+  0%,
+  8% { opacity: 0; }
+  12%,
+  28% { opacity: 1; }
+  34%,
+  100% { opacity: 0; }
+}
+
+@keyframes dealer-rig-deal-push {
+  0%,
+  26% { opacity: 0; }
+  32%,
+  48% { opacity: 1; }
+  54%,
+  100% { opacity: 0; }
+}
+
+@keyframes dealer-rig-deal-release {
+  0%,
+  46% { opacity: 0; }
+  52%,
+  70% { opacity: 1; }
+  82%,
+  100% { opacity: 0; }
+}
+
+@keyframes dealer-rig-reveal-grasp {
+  0%,
+  18% { opacity: 0; }
+  24%,
+  70% { opacity: 1; }
+  78%,
+  100% { opacity: 0; }
+}
+
+@keyframes dealer-rig-reveal-release {
+  0% { opacity: 0; }
+  8%,
+  18% { opacity: 1; }
+  24%,
+  66% { opacity: 0; }
+  74%,
+  84% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes dealer-rig-contact-shadow {
+  0%,
+  10% { opacity: 0; }
+  16%,
+  68% { opacity: 0.36; }
+  82%,
+  100% { opacity: 0; }
 }
 
 @keyframes dealer-sleeve-four-phase {
@@ -3078,11 +3228,19 @@ footer p {
 @keyframes player-card-drag-complete {
   0% {
     transform:
-      rotateY(var(--reveal-angle))
-      rotateX(2deg)
+      translateY(var(--reveal-lift))
+      rotateY(0deg)
+      rotateX(var(--squeeze-card-tilt))
       rotateZ(var(--reveal-tilt));
   }
-  72% {
+  24% {
+    transform:
+      translateY(-4px)
+      rotateY(18deg)
+      rotateX(2deg)
+      rotateZ(0deg);
+  }
+  76% {
     transform: rotateY(187deg) rotateX(-1deg) rotateZ(0deg);
   }
   100% {
@@ -3231,10 +3389,11 @@ footer p {
 
 @keyframes squeeze-stack-commit {
   0%,
-  48% {
+  42% {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+  72%,
   100% {
     opacity: 0;
     transform: translateY(-3px) scale(1.01);
@@ -3277,7 +3436,7 @@ footer p {
       scaleX(var(--squeeze-hand-direction))
       scale(0.98);
   }
-  48% {
+  42% {
     opacity: 1;
     transform:
       translateX(-44%)
@@ -3285,6 +3444,7 @@ footer p {
       scaleX(var(--squeeze-hand-direction))
       scale(0.99);
   }
+  70%,
   100% {
     opacity: 0;
     transform:
@@ -3666,8 +3826,8 @@ footer p {
   }
 
   .card-reveal-hand {
-    bottom: -160px;
-    width: 220px;
+    bottom: -140px;
+    width: 160px;
     filter: drop-shadow(0 10px 9px rgba(0, 0, 0, 0.2));
     mask-image: linear-gradient(to bottom, #000 0 76%, transparent 100%);
     -webkit-mask-image: linear-gradient(to bottom, #000 0 76%, transparent 100%);
@@ -3994,7 +4154,7 @@ footer p {
   background-color: #073325;
   background-image:
     linear-gradient(180deg, rgba(2, 8, 7, 0.08) 0%, rgba(3, 21, 15, 0.02) 26%, rgba(3, 36, 25, 0.18) 51%, rgba(3, 34, 24, 0.74) 100%),
-    url("/assets/casino-dealer-scene-desktop-v1.webp");
+    url("/assets/casino-dealer-clean-desktop-v2.webp");
   background-repeat: no-repeat;
   background-position: center top;
   background-size: cover;
@@ -4039,7 +4199,7 @@ footer p {
   inset: 0;
   pointer-events: none;
   opacity: 0.84;
-  background-image: url("/assets/casino-dealer-scene-desktop-v1.webp");
+  background-image: url("/assets/casino-dealer-clean-desktop-v2.webp");
   background-repeat: no-repeat;
   background-position: center top;
   background-size: cover;
@@ -4068,30 +4228,38 @@ footer p {
   will-change: auto;
 }
 
-.dealer-clean-plate {
+.dealer-idle-arm-plate {
   position: absolute;
   z-index: 2;
   inset: 0;
   pointer-events: none;
-  opacity: 0;
-  background-color: #073325;
-  background-image:
-    linear-gradient(180deg, rgba(2, 8, 7, 0.08) 0%, rgba(3, 21, 15, 0.02) 26%, rgba(3, 36, 25, 0.18) 51%, rgba(3, 34, 24, 0.74) 100%),
-    url("/assets/casino-dealer-clean-desktop-v2.webp");
+  opacity: 1;
+  background-image: url("/assets/casino-dealer-scene-desktop-v1.webp");
   background-repeat: no-repeat;
   background-position: center top;
   background-size: cover;
-  transition: opacity 160ms cubic-bezier(0.2, 0.72, 0.18, 1);
-  will-change: auto;
+  mask-image: radial-gradient(
+    ellipse 14% 14% at 62% 50%,
+    #000 0 54%,
+    rgba(0, 0, 0, 0.92) 68%,
+    rgba(0, 0, 0, 0.28) 86%,
+    transparent 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 14% 14% at 62% 50%,
+    #000 0 54%,
+    rgba(0, 0, 0, 0.92) 68%,
+    rgba(0, 0, 0, 0.28) 86%,
+    transparent 100%
+  );
+  transition: opacity 120ms cubic-bezier(0.2, 0.72, 0.18, 1);
 }
 
-.casino-table-stage.is-dealing-cards .dealer-clean-plate,
-.casino-table-stage.is-locking-bets .dealer-clean-plate,
-.casino-table-stage.is-settling-table .dealer-clean-plate,
-.casino-table-stage.is-new-shoe .dealer-clean-plate,
-.casino-table-stage.is-dealer-revealing .dealer-clean-plate {
-  opacity: 1;
-  will-change: opacity;
+.casino-table-stage:not([data-table-phase="betting"]) .dealer-idle-arm-plate,
+.casino-table-stage.is-locking-bets .dealer-idle-arm-plate,
+.casino-table-stage.is-dealing-card .dealer-idle-arm-plate,
+.casino-table-stage.is-dealer-revealing .dealer-idle-arm-plate {
+  opacity: 0;
 }
 
 .casino-scene-vignette {
@@ -4260,54 +4428,130 @@ footer p {
 }
 
 .dealer-arm-bridge {
-  --dealer-anchor-x: 62%;
-  --dealer-anchor-y: 48%;
-  --dealer-rest-angle: 12deg;
-  --dealer-rest-reach: 0.2;
-  --dealer-shoe-angle: 10deg;
-  --dealer-shoe-reach: 0.74;
-  --dealer-pull-angle: 11deg;
-  --dealer-pull-reach: 0.7;
-  --dealer-middle-angle: 20deg;
-  --dealer-middle-reach: 0.95;
-  --dealer-target-angle: 27deg;
-  --dealer-target-reach: 1.12;
+  --dealer-rig-anchor-x: 62%;
+  --dealer-rig-anchor-y: 50%;
+  --dealer-rig-rest-angle: -55deg;
+  --dealer-rig-rest-reach: 0.62;
+  --dealer-rig-approach-angle: -78deg;
+  --dealer-rig-approach-reach: 1;
+  --dealer-rig-pull-angle: -78deg;
+  --dealer-rig-pull-reach: 0.96;
+  --dealer-rig-middle-angle: -82deg;
+  --dealer-rig-middle-reach: 1.08;
+  --dealer-rig-target-angle: -86deg;
+  --dealer-rig-target-reach: 1.16;
+  --dealer-rig-duration: 880ms;
   position: absolute;
-  z-index: 3;
+  z-index: 6;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
   opacity: 0;
+  contain: paint;
 }
 
 .dealer-arm-bridge.is-ready {
   opacity: 1;
 }
 
-.dealer-shirt-sleeve,
-.dealer-arm-shadow {
+.dealer-rig-vector {
   position: absolute;
-  top: -34px;
+  top: 0;
   left: 0;
   display: block;
-  width: 220px;
-  height: 54px;
-  transform-origin: left center;
+  width: clamp(175px, 15vw, 210px);
+  aspect-ratio: 480 / 811;
+  transform-origin: 0 0;
+  filter:
+    brightness(0.78)
+    saturate(0.8)
+    contrast(1.05)
+    drop-shadow(0 14px 12px rgba(0, 0, 0, 0.25));
   will-change: transform, opacity;
 }
 
-.dealer-shirt-sleeve {
-  overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.78), transparent 17%),
-    linear-gradient(172deg, #f2eee5 0%, #d8d5cf 44%, #b4b2af 76%, #858785 100%);
-  border: 1px solid rgba(255, 255, 255, 0.26);
-  border-radius: 48% 20% 20% 46% / 50% 40% 60% 50%;
-  box-shadow:
-    inset 0 -10px 16px rgba(45, 48, 47, 0.16),
-    inset 0 1px rgba(255, 255, 255, 0.72);
-  clip-path: polygon(0 13%, 100% 29%, 100% 71%, 0 87%);
-  animation: dealer-sleeve-four-phase 880ms cubic-bezier(0.2, 0.68, 0.18, 1) both;
+.dealer-rig-pose {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  opacity: 0;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0 28%,
+    rgba(0, 0, 0, 0.3) 32%,
+    #000 37% 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0 28%,
+    rgba(0, 0, 0, 0.3) 32%,
+    #000 37% 100%
+  );
+}
+
+.dealer-rig-pose-grasp {
+  transform: translate(-54.8%, -40.2%);
+}
+
+.dealer-rig-pose-push {
+  transform: translate(-48.75%, -40.2%);
+}
+
+.dealer-rig-pose-release {
+  transform: translate(-45%, -40.3%);
+}
+
+.dealer-rig-contact-shadow {
+  position: absolute;
+  z-index: -1;
+  top: 39%;
+  left: 4%;
+  width: 28%;
+  height: 4%;
+  opacity: 0;
+  background: radial-gradient(ellipse, rgba(0, 0, 0, 0.48), transparent 70%);
+  border-radius: 50%;
+  filter: blur(3px);
+  transform: translate(-50%, -50%);
+}
+
+.dealer-arm-bridge-deal .dealer-rig-vector {
+  animation: dealer-rig-deal-path var(--dealer-rig-duration)
+    cubic-bezier(0.2, 0.68, 0.18, 1) both;
+}
+
+.dealer-arm-bridge-reveal .dealer-rig-vector {
+  animation: dealer-rig-reveal-path var(--dealer-rig-duration)
+    cubic-bezier(0.2, 0.72, 0.18, 1) both;
+}
+
+.dealer-arm-bridge-deal .dealer-rig-pose-grasp {
+  animation: dealer-rig-deal-grasp var(--dealer-rig-duration) linear both;
+}
+
+.dealer-arm-bridge-deal .dealer-rig-pose-push {
+  animation: dealer-rig-deal-push var(--dealer-rig-duration) linear both;
+}
+
+.dealer-arm-bridge-deal .dealer-rig-pose-release {
+  animation: dealer-rig-deal-release var(--dealer-rig-duration) linear both;
+}
+
+.dealer-arm-bridge-reveal .dealer-rig-pose-grasp {
+  animation: dealer-rig-reveal-grasp var(--dealer-rig-duration) linear both;
+}
+
+.dealer-arm-bridge-reveal .dealer-rig-pose-release {
+  animation: dealer-rig-reveal-release var(--dealer-rig-duration) linear both;
+}
+
+.dealer-arm-bridge-deal .dealer-rig-contact-shadow,
+.dealer-arm-bridge-reveal .dealer-rig-contact-shadow {
+  animation: dealer-rig-contact-shadow var(--dealer-rig-duration) ease both;
 }
 
 .dealer-signal-gesture {
@@ -4818,14 +5062,10 @@ footer p {
 }
 
 /*
- * The clean action plate already depicts the dealer with one arm withdrawn.
- * Keep the card/chip choreography, but suppress synthetic full-arm overlays
- * that otherwise create a visible third hand over the photographed dealer.
+ * Keep legacy signal, burn-card, and settlement sleeves hidden against the
+ * photographed dealer. Deal and reveal use the single stage-level rig above.
  */
-.casino-table-stage .dealer-arm-bridge,
 .casino-table-stage .dealer-signal-gesture,
-.casino-table-stage .dealer-motion-hand.is-dealing,
-.casino-table-stage .dealer-motion-hand.is-revealing,
 .casino-table-stage .dealer-new-shoe-shadow,
 .casino-table-stage .dealer-new-shoe-sleeve,
 .casino-table-stage .dealer-new-shoe-hand,
@@ -4920,7 +5160,7 @@ footer p {
  */
 .dealer-shoe-foreground-occlusion {
   position: absolute;
-  z-index: 6;
+  z-index: 7;
   inset: 0;
   pointer-events: none;
   visibility: hidden;
@@ -6448,19 +6688,30 @@ footer p {
     background-color: #073426;
     background-image:
       linear-gradient(180deg, rgba(1, 8, 6, 0.04) 0%, rgba(3, 24, 17, 0.03) 31%, rgba(3, 38, 26, 0.47) 55%, rgba(3, 31, 22, 0.88) 100%),
-      url("/assets/casino-dealer-scene-mobile-v1.webp");
+      url("/assets/casino-dealer-clean-mobile-v2.webp");
     background-position: center top;
     background-size: 100% auto;
     border-radius: 0;
   }
 
-  .dealer-clean-plate {
-    background-color: #073426;
-    background-image:
-      linear-gradient(180deg, rgba(1, 8, 6, 0.04) 0%, rgba(3, 24, 17, 0.03) 31%, rgba(3, 38, 26, 0.47) 55%, rgba(3, 31, 22, 0.88) 100%),
-      url("/assets/casino-dealer-clean-mobile-v2.webp");
+  .dealer-idle-arm-plate {
+    background-image: url("/assets/casino-dealer-scene-mobile-v1.webp");
     background-position: center top;
     background-size: 100% auto;
+    mask-image: radial-gradient(
+      ellipse 17% 8.5% at 59% 30%,
+      #000 0 54%,
+      rgba(0, 0, 0, 0.92) 68%,
+      rgba(0, 0, 0, 0.28) 86%,
+      transparent 100%
+    );
+    -webkit-mask-image: radial-gradient(
+      ellipse 17% 8.5% at 59% 30%,
+      #000 0 54%,
+      rgba(0, 0, 0, 0.92) 68%,
+      rgba(0, 0, 0, 0.28) 86%,
+      transparent 100%
+    );
   }
 
   .dealer-shoe-foreground-occlusion {
@@ -6487,7 +6738,7 @@ footer p {
   }
 
   .dealer-idle-breath {
-    background-image: url("/assets/casino-dealer-scene-mobile-v1.webp");
+    background-image: url("/assets/casino-dealer-clean-mobile-v2.webp");
     background-position: center top;
     background-size: 100% auto;
     mask-image:
@@ -6635,13 +6886,22 @@ footer p {
   }
 
   .card-reveal-hand {
-    bottom: -178px;
-    width: 208px;
+    bottom: -135px;
+    width: 145px;
   }
 
   .squeeze-hand {
-    bottom: -94px;
+    bottom: -135px;
     width: clamp(132px, 36vw, 150px);
+  }
+
+  .dealer-rig-vector {
+    width: clamp(130px, 37vw, 152px);
+    filter:
+      brightness(0.72)
+      saturate(0.8)
+      contrast(1.05)
+      drop-shadow(0 10px 9px rgba(0, 0, 0, 0.24));
   }
 
   .first-person-hands .hand.is-revealing {
@@ -6672,15 +6932,17 @@ footer p {
   }
 
   .reveal-card.is-user-flipping,
-  .reveal-card.is-user-flipping .reveal-card-inner,
-  .reveal-card.is-user-flipping .card-reveal-hand {
+  .reveal-card.is-user-flipping .reveal-card-inner {
     animation-duration: 900ms;
   }
 
+  .reveal-card.is-user-flipping .card-reveal-hand {
+    animation-duration: 760ms;
+  }
+
   .reveal-card.is-user-flipping.is-drag-commit,
-  .reveal-card.is-user-flipping.is-drag-commit .reveal-card-inner,
-  .reveal-card.is-user-flipping.is-drag-commit .card-reveal-hand {
-    animation-duration: 520ms;
+  .reveal-card.is-user-flipping.is-drag-commit .reveal-card-inner {
+    animation-duration: 430ms;
   }
 
   .reveal-card.is-auto-flipping,
@@ -7070,8 +7332,20 @@ footer p {
   .card-reveal-hand,
   .dealer-motion-hand,
   .dealer-arm-bridge,
+  .squeeze-hand,
+  .squeeze-stack,
   .dealer-shoe-foreground-occlusion {
     display: none !important;
+  }
+
+  .reveal-card.is-dragging {
+    transform: translateX(calc(var(--card-index) * -12px))
+      rotate(calc((var(--card-index) - 1) * 1.5deg)) !important;
+  }
+
+  .reveal-card.is-dragging .reveal-card-inner {
+    clip-path: none !important;
+    transform: none !important;
   }
 
   .table-phase-sweep,
@@ -7332,7 +7606,7 @@ footer p {
   inset: 0;
   display: grid;
   place-items: center;
-  color: #6f817a;
+  color: #445c53;
   font-size: 8px;
   letter-spacing: 0.12em;
   pointer-events: none;
@@ -7440,15 +7714,15 @@ footer p {
 
 @keyframes dealer-card-contact-shadow {
   0%,
-  58% {
+  62% {
     opacity: 0;
     transform: scaleX(0.42) scaleY(0.42);
   }
-  74% {
-    opacity: 0.42;
-    transform: scaleX(1.18) scaleY(0.82);
+  76% {
+    opacity: 0.24;
+    transform: scaleX(0.92) scaleY(0.66);
   }
-  88%,
+  90%,
   100% {
     opacity: 0.28;
     transform: scaleX(1) scaleY(0.72);
