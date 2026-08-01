@@ -1,11 +1,52 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
+  EMPTY_BETS,
+  createSeededRandomInt,
+  createShoe,
+} from '../../src/game/baccarat'
+import { prepareRoundState } from '../../src/game/tableEngine'
+import type { PersistedTableEnvelopeV2 } from '../../src/game/tableState'
+import type { PersistedGameState } from '../../src/types'
+import {
   finishRoundWithKeyboard,
   openFreshTable,
   readStoredGame,
   readStoredPending,
   startPlayerRound,
 } from './support/gameFixture'
+
+function bankerOnlyThirdCardEnvelope(): PersistedTableEnvelopeV2 {
+  const game: PersistedGameState = {
+    version: 1,
+    balance: 10_000,
+    shoe: createShoe(
+      createSeededRandomInt(7),
+      'S-REDUCED-BANKER-THIRD',
+    ),
+    history: [],
+    lastBets: { ...EMPTY_BETS },
+    sessionStartedAt: '2026-08-01T00:00:00.000Z',
+  }
+  const prepared = prepareRoundState(
+    { game, pending: null },
+    {
+      bets: { ...EMPTY_BETS, player: 100 },
+      playMode: 'bet',
+      roundId: 'R-REDUCED-BANKER-THIRD',
+    },
+  )
+  if (!prepared.pending) throw new Error('Seeded round was not prepared')
+
+  return {
+    schemaVersion: 2,
+    revision: 1,
+    commitId: 'C-REDUCED-BANKER-THIRD',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+    lastWriterId: 'W-REDUCED-BANKER-THIRD',
+    lastMutation: 'prepare-round',
+    ...prepared,
+  }
+}
 
 async function openTableWithFullMotion(page: Page): Promise<void> {
   await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -289,4 +330,32 @@ test('reduced motion completes one round and clears the durable pending journal'
   const after = await readStoredGame(page)
   expect(after.historyLength).toBe(before.historyLength + 1)
   expect(after.handNumber).toBe(before.handNumber + 1)
+})
+
+test('reduced point call re-arms the automatic Banker third-card reveal', async ({
+  page,
+}) => {
+  const envelope = bankerOnlyThirdCardEnvelope()
+  expect(envelope.pending?.result.playerCards).toHaveLength(2)
+  expect(envelope.pending?.result.bankerCards).toHaveLength(3)
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.addInitScript((seededEnvelope) => {
+    localStorage.setItem(
+      'nine-road-baccarat:table:v2',
+      JSON.stringify(seededEnvelope),
+    )
+  }, envelope)
+  await page.goto('/')
+  await expect(page.locator('[data-table-phase]')).toBeVisible()
+  await expect.poll(() => readStoredPending(page)).not.toBeNull()
+
+  await finishRoundWithKeyboard(page, 1, 15_000)
+
+  await expect(page.locator('[data-table-phase]')).toHaveAttribute(
+    'data-table-phase',
+    'betting',
+  )
+  expect(await readStoredPending(page)).toBeNull()
+  expect((await readStoredGame(page)).historyLength).toBe(1)
 })

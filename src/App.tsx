@@ -2078,17 +2078,32 @@ function App() {
     }
     const roundId = pendingRound.id
     const cardId = pendingNextCard.id
-    autoFlipTimerRef.current = window.setTimeout(() => {
+    const attemptAutomaticReveal = () => {
       const current = pendingRoundRef.current
       const expected = current
         ? nextRevealCard(current.result, revealedCountRef.current)
         : null
-      if (current?.id === roundId && expected?.id === cardId) {
-        beginRevealCardRef.current(cardId, 'dealer')
+      if (current?.id !== roundId || expected?.id !== cardId) {
+        autoFlipTimerRef.current = null
+        return
       }
-    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      ? 20
-      : scaledMotionDuration(420, 20))
+      if (
+        !roundReadyRef.current ||
+        flipLockRef.current ||
+        !dealtCardIdsRef.current.has(cardId)
+      ) {
+        autoFlipTimerRef.current = window.setTimeout(attemptAutomaticReveal, 40)
+        return
+      }
+      autoFlipTimerRef.current = null
+      beginRevealCardRef.current(cardId, 'dealer')
+    }
+    autoFlipTimerRef.current = window.setTimeout(
+      attemptAutomaticReveal,
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 20
+        : scaledMotionDuration(420, 20),
+    )
 
     return () => {
       if (autoFlipTimerRef.current !== null) {
@@ -2097,7 +2112,9 @@ function App() {
       }
     }
   }, [
+    dealtCardIds,
     flippingCardId,
+    initialPointsAnnouncedRoundId,
     newShoeOpen,
     pendingNextCard,
     pendingNextRequiresUser,
@@ -2471,6 +2488,10 @@ function App() {
                   : ''
               }`}
               data-table-phase={tableMotionPhase}
+              data-round-ready={roundReady}
+              data-flip-locked={flipLockRef.current}
+              data-dealt-card-count={dealtCardIds.size}
+              data-pending-next-card-id={pendingNextCard?.id}
             >
               <div className="felt-pattern" />
               <div className="motion-asset-preload" aria-hidden="true">

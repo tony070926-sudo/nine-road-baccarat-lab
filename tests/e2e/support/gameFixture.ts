@@ -97,9 +97,10 @@ export async function readStoredGame(page: Page): Promise<StoredGameSnapshot> {
 export async function finishRoundWithKeyboard(
   page: Page,
   minimumHistoryLength = 1,
+  timeoutMs = 35_000,
 ): Promise<void> {
   const stage = page.locator('[data-table-phase]')
-  const deadline = Date.now() + 35_000
+  const deadline = Date.now() + timeoutMs
 
   while (Date.now() < deadline) {
     const game = await readStoredGame(page)
@@ -118,5 +119,23 @@ export async function finishRoundWithKeyboard(
     }
   }
 
-  throw new Error('The baccarat round did not return to betting in time.')
+  const diagnostic = await stage.evaluate((table) => ({
+    phase: table.getAttribute('data-table-phase'),
+    roundReady: table.getAttribute('data-round-ready'),
+    flipLocked: table.getAttribute('data-flip-locked'),
+    dealtCardCount: table.getAttribute('data-dealt-card-count'),
+    pendingNextCardId: table.getAttribute('data-pending-next-card-id'),
+    revealCards: Array.from(
+      table.querySelectorAll<HTMLButtonElement>('[data-reveal-card-id]'),
+    ).map((card) => ({
+      id: card.dataset.revealCardId,
+      disabled: card.disabled,
+      className: card.className,
+      dealSequence: card.dataset.dealSequence,
+      inputMethod: card.dataset.inputMethod,
+    })),
+  }))
+  throw new Error(
+    `The baccarat round did not return to betting in time: ${JSON.stringify(diagnostic)}`,
+  )
 }
