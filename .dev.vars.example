@@ -1,0 +1,2 @@
+# Local development only. Replace this with a unique random value of 32+ characters.
+LEADERBOARD_RATE_LIMIT_SECRET=replace-with-a-local-random-secret-at-least-32-characters

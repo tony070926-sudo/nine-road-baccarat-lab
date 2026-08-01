@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  BookOpen,
   CircleAlert,
-  FlaskConical,
-  History,
   RefreshCw,
   RotateCcw,
   Settings2,
@@ -56,6 +53,8 @@ import { DealerNewShoeAction } from './components/DealerNewShoeAction'
 import { DealerTableAction } from './components/DealerTableAction'
 import { ExperienceSettingsModal } from './components/ExperienceSettingsModal'
 import { HistoryTable } from './components/HistoryTable'
+import { LeaderboardPanel } from './components/LeaderboardPanel'
+import { leaderboardHighFromRecordedGame } from './leaderboard/historySeed'
 import type { RevealInputMethod } from './components/PlayingCard'
 import { ProbabilityLab } from './components/ProbabilityLab'
 import { DealerRoadPanel, RoadBoard } from './components/RoadBoard'
@@ -63,6 +62,7 @@ import { RoundHand } from './components/RoundHand'
 import { RoundRuleTrace } from './components/RoundRuleTrace'
 import { RulesModal } from './components/RulesModal'
 import { TableGuests } from './components/TableGuests'
+import { TableDetailActions } from './components/TableDetailActions'
 import { TableMaintenanceModals } from './components/TableMaintenanceModals'
 import {
   TableMotionAtmosphere,
@@ -227,6 +227,10 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [roadFullscreen, setRoadFullscreen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const recordedLeaderboardHigh = useMemo(
+    () => leaderboardHighFromRecordedGame(game.balance, game.history),
+    [game.balance, game.history],
+  )
   const [activeCrowdCheer, setActiveCrowdCheer] =
     useState<ActiveCrowdCheer | null>(null)
   const [settlementMotion, setSettlementMotion] =
@@ -2243,10 +2247,13 @@ function App() {
     gameRef.current = nextGame
     setGame(nextGame)
     setBets({ ...EMPTY_BETS })
+    setSelectedChip(100)
     clearVisualWagers()
     setResetOpen(false)
+    setDetailView(null)
+    setFormError(null)
     setRevealAnnouncement('请先选择下注对象与筹码，然后确认开牌。')
-    setNotice('模拟数据与教学分已重置。')
+    setNotice('牌桌与教学分已重置；排行榜历史最高保留。')
     roundLockRef.current = false
     releaseTableLease()
   }
@@ -2753,37 +2760,11 @@ function App() {
               <small>{statPercent(stats.tie, stats.count)}</small>
             </span>
           </div>
-          <div className="table-detail-actions">
-            <button
-              className={detailView === 'road' ? 'is-active' : ''}
-              onClick={() => setDetailView(detailView === 'road' ? null : 'road')}
-              aria-pressed={detailView === 'road'}
-            >
-              查看路单大屏
-            </button>
-            <button
-              className={detailView === 'history' ? 'is-active' : ''}
-              onClick={() =>
-                setDetailView(detailView === 'history' ? null : 'history')
-              }
-              aria-pressed={detailView === 'history'}
-            >
-              <History size={16} />
-              完整牌局记录
-            </button>
-            <button
-              className={detailView === 'lab' ? 'is-active' : ''}
-              onClick={() => setDetailView(detailView === 'lab' ? null : 'lab')}
-              aria-pressed={detailView === 'lab'}
-            >
-              <FlaskConical size={16} />
-              概率实验室
-            </button>
-            <button onClick={openRulesModal}>
-              <BookOpen size={16} />
-              规则与真实性
-            </button>
-          </div>
+          <TableDetailActions
+            detailView={detailView}
+            onChange={setDetailView}
+            onOpenRules={openRulesModal}
+          />
         </section>
 
         {detailView === 'road' && (
@@ -2804,11 +2785,18 @@ function App() {
 
         {detailView === 'lab' && <ProbabilityLab />}
 
+        <LeaderboardPanel
+          active={detailView === 'leaderboard'}
+          currentBalance={game.balance}
+          recordedHighestBalance={recordedLeaderboardHigh}
+          scoreEventId={game.history.at(-1)?.id ?? null}
+        />
+
         <section className="simulator-disclosure">
           <ShieldCheck size={20} />
           <p>
             八副牌经 Web Crypto 洗牌，并按公开监管补牌规则逐张发出。教学分不可购买、兑换或提现；
-            视觉场景为原创模拟环境，与任何实体娱乐场无关。
+            视觉场景为原创模拟环境，与任何实体娱乐场无关。匿名昵称与历史最高会尝试自报至公开的未验证模拟榜。
           </p>
           <button onClick={openRulesModal}>查看公开依据</button>
         </section>

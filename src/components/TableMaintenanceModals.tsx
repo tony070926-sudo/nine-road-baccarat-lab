@@ -23,11 +23,12 @@ export function TableMaintenanceModals({
   return (
     <>
       {resetOpen && (
-        <Modal title="重置全部本机模拟数据？" onClose={onCloseReset}>
+        <Modal title="重置本机牌桌模拟？" onClose={onCloseReset}>
           <div className="confirm-copy">
             <CircleAlert size={30} />
             <p>
-              这会清除当前浏览器中的牌靴、最近 500 局记录和教学分余额，且无法撤销。
+              这会清除当前浏览器中的牌靴、最近 500 局记录和当前教学分，
+              恢复到 10,000 教学分。排行榜匿名身份与已上报的历史最高不会被清除。
             </p>
             <div>
               <button className="secondary-button" onClick={onCloseReset}>

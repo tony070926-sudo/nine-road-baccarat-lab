@@ -26,6 +26,8 @@
 - 珠盘路、大路、大眼仔、小路、曱甴路完整大屏
 - 每局牌面、五项下注、返还、庄佣金、净输赢、前后余额和规则版本记录
 - 最近 500 局浏览器本地持久化，支持 CSV / JSON 导出
+- 可编辑匿名昵称的全体玩家分页排行榜；D1 只保留每个匿名身份到达过的最高教学分
+- 牌桌内重置按钮一键恢复 10,000 教学分、新牌靴和空记录，且不会降低已上报的历史最高分
 - 每个下注区可按实际放置顺序逐枚撤回最后一枚筹码；键盘、读屏与移动端均保留完整核心操作
 - 本局规则轨迹只解释已经公开的牌面，不提前泄露暗牌；独立 Web Worker 概率实验室支持 100 / 1,000 / 10,000 局并显示理论值、偏差与 95% 置信区间
 - 主牌桌优先的精简界面，路单大屏与完整牌局记录按需展开
@@ -84,12 +86,100 @@ npm run audit:probability
 
 ## Cloudflare Pages
 
+本项目把排行榜数据严格分成两个环境；D1 UUID 不是 secret，但发布守卫会逐项核对，禁止
+目标漂移：
+
+| 运行环境 | 固定 Git / Pages 分支 | D1 |
+| --- | --- | --- |
+| 本地与 Pages preview | `preview` | `nine-road-baccarat-leaderboard-preview` (`e0bfb3cc-1dbe-4663-97a4-adaa691b62b0`) |
+| Pages production | `main` | `nine-road-baccarat-leaderboard` (`c941400a-5a6c-459a-bdc6-28884b58f8fa`) |
+
+`wrangler.jsonc` 的 top-level、`env.preview` 和 `env.production` 都显式声明 D1；Pages
+配置格式不接受 `secrets` 字段，因此 `LEADERBOARD_RATE_LIMIT_SECRET` 由发布前置检查直接
+向 Cloudflare 核验。本地默认只使用 preview 配置；不要用裸 `wrangler d1 ... --remote`
+绕过项目脚本。
+
+### 本地 Pages / D1
+
 ```bash
+npm ci
+cp .dev.vars.example .dev.vars
 npm run build
-npx wrangler pages deploy dist --project-name nine-road-baccarat-lab --branch main
+npm run db:migrate:local
+npm run serve:e2e
 ```
 
-`wrangler.jsonc` 中的 `pages_build_output_dir` 为 `./dist`。生产站点不需要数据库或密钥；记录仅保存在当前浏览器中。
+`.dev.vars` / `.env` 及其环境变体均被 Git 忽略，只有不含真实密钥的 example 文件允许提交。
+请把 example 占位值换成独立的 32 字符以上本地随机值。
+
+### Preview 与 production 发布
+
+全体玩家排行榜通过 Pages Function `/api/leaderboard` 和 D1 binding
+`LEADERBOARD_DB` 共享数据。第一次发布前分别交互式写入两个**不同**的 32 字符以上随机
+密钥；命令不会把值写进仓库：
+
+```bash
+npx wrangler pages secret put LEADERBOARD_RATE_LIMIT_SECRET --env preview --project-name nine-road-baccarat-lab
+npx wrangler pages secret put LEADERBOARD_RATE_LIMIT_SECRET --env production --project-name nine-road-baccarat-lab
+```
+
+发布固定遵循 `secret → preflight → migration → no-pending verify → deploy → smoke`。
+fresh 数据库会按序应用 `0001`–`0004`；已有数据库使用同一命令，但 Wrangler 只应用
+`d1_migrations` 尚未记录的 upgrade。任何远程 migration 前，preflight 都会失败优先核对：
+明确目标、当前分支、配置中的 D1 名称/UUID、远程 D1 实体，以及对应 Pages 环境是否存在
+加密 secret 键名。前置检查还会通过 Cloudflare Pages API 核对当前远端
+`production_branch=main`，并检查最新 production 部署仍来自 `main`；它优先使用
+独立的 `CLOUDFLARE_PAGES_READ_TOKEN`（建议使用仅含 Pages Read 的最小权限 token；
+Wrangler 不会把它用于 D1、secret 或 deploy 命令），其次兼容完整发布链使用的
+`CLOUDFLARE_API_TOKEN`，否则只做
+best-effort 复用当前 Wrangler default profile 的明文 OAuth 登录且绝不输出 token；使用
+encrypted keyring、非 default profile 或凭据过期时会 fail-closed，要求显式 API token。
+Production 还会硬性要求 `main` 的 tracked 与 untracked worktree 全部干净，
+且没有跳过开关；发布前提交预期变更并确认 `git status --short` 无输出。Preview 固定使用
+非 `main` 的 `preview` 分支，允许脏 worktree 进行验证。
+
+Preview：
+
+```bash
+git switch preview
+npm run release:preflight:preview
+npm run db:migrate:preview
+npm run db:verify:preview
+npm run deploy:preview
+npm run smoke:leaderboard -- https://<明确的-preview-deployment-url> --confirm-write
+```
+
+Production：
+
+```bash
+git switch main
+npm run release:preflight:production
+npm run db:migrate:production
+npm run db:verify:production
+npm run deploy:production
+npm run smoke:leaderboard -- https://<明确的-production-url> --confirm-write
+```
+
+没有目标含糊的 `deploy` 或 `db:migrate:remote` 脚本。两个 `deploy:*` 都会重新执行
+architecture / Functions 类型与打包 / build，随后再次 preflight、对**本环境**执行 migration、
+确认没有 pending migration，最后用固定 `--branch preview` 或 `--branch main` 发布。
+Wrangler 的机器可读部署结果必须再次匹配目标 environment、`production_branch=main`、项目名、
+部署 ID 与明确版本 URL，否则脚本失败且不会把部署宣告为成功。smoke 没有默认 URL，且必须
+显式确认写入；它会创建一个一次性匿名身份并依次验证 GET 200、
+POST 200（含安全整数 `rank >= 1`）与并发冷却 429。`npm run check:release` 的静态环境隔离契约已通过
+`check:functions` 接入 `npm run check` 和现有 CI。
+
+缺少或过短的服务端密钥时，上报会失败关闭，但本机牌桌仍可使用。
+
+排行榜是**自报、未验证的模拟榜**：匿名令牌只能证明后续请求仍来自同一浏览器身份，
+不能证明客户端上报的金额一定由真实牌局演进产生。API 会限制请求大小、分页、昵称、
+异常金额和同一身份的提交频率。写入边界为：单身份变更间隔 2 秒、单网络每分钟
+最多 30 次上报请求、每小时最多 5 个新身份、最高金额 10 亿教学分、全榜最多
+100,000 个身份。Function 仅将 Cloudflare 接入网络地址与服务端密钥做 HMAC 后用于配额，
+不保存原始地址；超过 24 小时的配额记录会在后续有效写入时清理。共享网络可能共享配额，
+攻击者也可能通过更换网络绕过，因此这仍不是防作弊证明；排行榜不得用于奖金、兑换、
+公平竞赛或任何有经济利益的排名。要做可信排名，必须把随机发牌、牌局状态和余额结算
+迁到服务端权威执行并验证，而不是让客户端自行签名成绩。
 
 牌与筹码录音的原始文件、转码和许可收据见
 [`public/assets/audio/ATTRIBUTION.md`](public/assets/audio/ATTRIBUTION.md)。体验设置、概率实验结果与音频分轨使用独立本机键，不会写入或改动 v2 权威牌桌快照。

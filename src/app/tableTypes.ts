@@ -1,7 +1,7 @@
 import type { Bets, PendingRound, PlayMode, ShoeState, Winner } from '../types'
 
 export type RevealActor = 'user' | 'dealer'
-export type DetailView = 'road' | 'history' | 'lab' | null
+export type DetailView = 'road' | 'history' | 'leaderboard' | 'lab' | null
 
 export interface RoundPrelude {
   id: string

@@ -3,5 +3,35 @@
   "name": "nine-road-baccarat-lab",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-07-27",
+  "d1_databases": [
+    {
+      "binding": "LEADERBOARD_DB",
+      "database_name": "nine-road-baccarat-leaderboard-preview",
+      "database_id": "e0bfb3cc-1dbe-4663-97a4-adaa691b62b0",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "env": {
+    "preview": {
+      "d1_databases": [
+        {
+          "binding": "LEADERBOARD_DB",
+          "database_name": "nine-road-baccarat-leaderboard-preview",
+          "database_id": "e0bfb3cc-1dbe-4663-97a4-adaa691b62b0",
+          "migrations_dir": "migrations"
+        }
+      ]
+    },
+    "production": {
+      "d1_databases": [
+        {
+          "binding": "LEADERBOARD_DB",
+          "database_name": "nine-road-baccarat-leaderboard",
+          "database_id": "c941400a-5a6c-459a-bdc6-28884b58f8fa",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  },
   "send_metrics": false
 }

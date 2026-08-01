@@ -12,6 +12,33 @@ import {
 test('completes a keyboard round without duplicate settlement @cross-browser', async ({
   page,
 }) => {
+  // This assertion owns the core table runtime boundary. Keep the unrelated
+  // public leaderboard deterministic so shared-IP quotas from other browser
+  // contexts cannot turn a handled 429 into browser console noise here.
+  await page.route('**/api/leaderboard', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue()
+      return
+    }
+    const submission = route.request().postDataJSON() as {
+      displayName: string
+      highestBalance: number
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'X-Leaderboard-Integrity': 'self-reported-unverified' },
+      body: JSON.stringify({
+        integrity: 'self-reported-unverified',
+        entry: {
+          rank: 1,
+          displayName: submission.displayName,
+          highestBalance: submission.highestBalance,
+          achievedAt: '2026-08-01T12:00:00.000Z',
+        },
+      }),
+    })
+  })
   const runtimeErrors = collectRuntimeErrors(page)
   await openFreshTable(page)
   const before = await readStoredGame(page)
