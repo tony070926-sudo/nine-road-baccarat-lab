@@ -30,6 +30,7 @@ import type {
 import {
   createRoundId,
   derivePendingRoundView,
+  finalResultCall,
   formatNumber,
   outcomeLabel,
   revealSideLabel,
@@ -42,6 +43,7 @@ import { useMotionProfilePreference } from './app/useMotionProfilePreference'
 import { useInitialPointCall } from './app/useInitialPointCall'
 import {
   settlementPresentationCopy,
+  settlementRecordIsVisible,
   useSettlementPresentation,
 } from './app/useSettlementPresentation'
 import {
@@ -246,10 +248,8 @@ function App() {
   const [settlementMotion, setSettlementMotion] =
     useState<DealerSettlementMotion | null>(null)
   const [roundPrelude, setRoundPrelude] = useState<RoundPrelude | null>(null)
-  const [newShoeMotion, setNewShoeMotion] =
-    useState<NewShoeMotion | null>(null)
-  const [outcomeMotion, setOutcomeMotion] =
-    useState<OutcomeMotion | null>(null)
+  const [newShoeMotion, setNewShoeMotion] = useState<NewShoeMotion | null>(null)
+  const [outcomeMotion, setOutcomeMotion] = useState<OutcomeMotion | null>(null)
   const [roundRequesting, setRoundRequesting] = useState(false)
   const [connectivityStatus, setConnectivityStatus] = useState<ConnectivityStatus>('checking')
   const latestRound = game.history[game.history.length - 1] ?? null
@@ -258,6 +258,7 @@ function App() {
     presentation: settlementPresentation,
     cardSweepMotion,
     clearedRoundId,
+    readyRoundId: settlementReadyRoundId,
     startSettlementPresentation,
     handleDealerSettlementStep,
     handleDealerSettlementComplete,
@@ -369,9 +370,7 @@ function App() {
     setWagerChipLedger(ledger)
   }
 
-  const clearVisualWagers = () => {
-    replaceWagerChipLedger(clearWagerChipLedger())
-  }
+  const clearVisualWagers = () => replaceWagerChipLedger(clearWagerChipLedger())
 
   const acquireTableLease = () => {
     if (tableLeaseReleaseRef.current) return Promise.resolve(true)
@@ -395,7 +394,8 @@ function App() {
     return request
   }
 
-  const releaseTableLease = () => {
+  const releaseTableLease = (cancelDealerSpeech = true) => {
+    if (cancelDealerSpeech) casinoAudio.cancelDealerCalls()
     const release = tableLeaseReleaseRef.current
     tableLeaseReleaseRef.current = null
     release?.()
@@ -542,9 +542,8 @@ function App() {
       if (stopped) return
       // BroadcastChannel and storage events are only revision hints. The
       // coordinator has already re-read and validated the canonical v2 key.
-      if (tableLeaseReleaseRef.current) {
-        releaseTableLease()
-      }
+      cancelInitialPointCall()
+      releaseTableLease()
       applyCanonicalSnapshot(snapshot, false)
       setStorageReady(true)
       if (
@@ -564,7 +563,7 @@ function App() {
       tableCoordinator.dispose()
       releaseTableLease()
     }
-  }, [initialSession.game, markInitialPointCallComplete, tableCoordinator])
+  }, [cancelInitialPointCall, initialSession.game, markInitialPointCallComplete, tableCoordinator])
 
   useEffect(() => {
     casinoAudio.setEnabled(audioEnabled)
@@ -675,8 +674,8 @@ function App() {
       ? revealOrder(ruleTraceResult).length
       : 0
   const currentShoeRecords = useMemo(
-    () => game.history.filter((record) => record.shoeId === game.shoe.id),
-    [game.history, game.shoe.id],
+    () => game.history.filter((record) => record.shoeId === game.shoe.id && settlementRecordIsVisible(record.id, settlementPresentation)),
+    [game.history, game.shoe.id, settlementPresentation],
   )
 
   const stats = useMemo(
@@ -1299,9 +1298,9 @@ function App() {
       settlement.net,
       current.playMode === 'fly',
     )
-    casinoAudio.playDealerCall(
+    const resultCall = casinoAudio.playDealerCall(
       `${current.id}:dealer-call:result`,
-      outcomeLabel(current.result.winner),
+      finalResultCall(current.result),
     )
     setRevealAnnouncement(
       `本局${outcomeLabel(current.result.winner)}，净输赢${
@@ -1316,6 +1315,7 @@ function App() {
       cardIds: current.result.dealOrder.map((card) => card.id),
       profile: effectiveMotionProfile,
       awaitDealerSettlement: shouldAnimateSettlement,
+      startAfter: resultCall,
       onComplete: () => {
         settlementLockRef.current = false
         setSettlementMotion(null)
@@ -1331,6 +1331,7 @@ function App() {
       },
     })
     if (!presentationStarted) {
+      casinoAudio.cancelDealerCalls()
       settlementLockRef.current = false
       setSettlementMotion(null)
       setSettlementWagerChipLedger(null)
@@ -1545,7 +1546,7 @@ function App() {
     }
 
     roundLockRef.current = false
-    releaseTableLease()
+    releaseTableLease(false)
     setBets({ ...EMPTY_BETS })
     clearVisualWagers()
     setRevealAnnouncement('新牌靴已完成装牌与烧牌，请选择下注对象与筹码。')
@@ -1950,13 +1951,11 @@ function App() {
       const naturalCall = current.result.natural ? '，天然牌' : ''
       const pointCall = `闲家 ${playerOpeningTotal} 点，庄家 ${bankerOpeningTotal} 点${naturalCall}`
       setRevealAnnouncement(`荷官宣读开局点数：${pointCall}。`)
-      casinoAudio.playDealerCall(
-        `${current.id}:dealer-call:initial-points`,
-        pointCall,
-      )
       beginInitialPointCall({
         roundId: current.id,
         profile: effectiveMotionProfile,
+        completion: casinoAudio.playDealerCall(
+          `${current.id}:dealer-call:initial-points`, pointCall),
         onComplete: continueDealerProcedure,
       })
       return
@@ -2563,7 +2562,7 @@ function App() {
               />
               <DealerTableAction
                 key={settlementMotion?.id ?? 'dealer-settlement-idle'}
-                motion={settlementMotion}
+                motion={settlementReadyRoundId === settlementMotion?.id ? settlementMotion : null}
                 stageRef={tableStageRef}
                 motionProfile={effectiveMotionProfile}
                 onStepChange={handleDealerSettlementStep}

@@ -8,6 +8,7 @@ import {
 import type { PendingRound, RoundRecord, Winner } from '../types'
 import {
   derivePendingRoundView,
+  finalResultCall,
   roundRevealInstruction,
   summarizeShoeRecords,
 } from './tableUi'
@@ -89,6 +90,19 @@ describe('table UI selectors', () => {
     expect(view.completedCards).toEqual([])
     expect(view.nextCard).toBeNull()
     expect(view.displayTotal).toBe(0)
+  })
+
+  it('formats the final dealer call with both totals and the winner', () => {
+    const result = pendingRound().result
+    expect(finalResultCall(result)).toBe(
+      `闲家 ${result.playerTotal} 点，庄家 ${result.bankerTotal} 点，${
+        result.winner === 'banker'
+          ? '庄家胜'
+          : result.winner === 'player'
+            ? '闲家胜'
+            : '和局'
+      }`,
+    )
   })
 
   it('keeps a wagered dealer-reveal round fully automatic', () => {

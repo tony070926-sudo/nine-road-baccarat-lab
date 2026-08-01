@@ -8,7 +8,7 @@ import {
   type RevealSide,
 } from '../game/reveal'
 import { tableLeaseIsSupported } from '../game/tableLease'
-import type { Card, PendingRound, RoundRecord, Winner } from '../types'
+import type { Card, DealResult, PendingRound, RoundRecord, Winner } from '../types'
 
 export interface ShoeRecordSummary {
   count: number
@@ -121,6 +121,10 @@ export function outcomeLabel(winner: Winner): string {
   if (winner === 'banker') return '庄家胜'
   if (winner === 'player') return '闲家胜'
   return '和局'
+}
+
+export function finalResultCall(result: DealResult): string {
+  return `闲家 ${handTotal(result.playerCards)} 点，庄家 ${handTotal(result.bankerCards)} 点，${outcomeLabel(result.winner)}`
 }
 
 export function revealSideLabel(side: RevealSide): string {

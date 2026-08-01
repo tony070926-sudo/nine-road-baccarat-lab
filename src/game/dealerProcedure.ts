@@ -215,14 +215,8 @@ function activeRevealStep(input: {
 
 function activeSettlementStep(
   settlementState: DealerProcedureSettlementState,
-  settlementActions: ReadonlySet<DealerProcedureWagerAction>,
 ): DealerProcedureStepId {
-  if (settlementState === 'not-started') {
-    if (settlementActions.has('collect')) return 'collect-losing-wagers'
-    if (settlementActions.has('push')) return 'return-pushed-wagers'
-    if (settlementActions.has('pay')) return 'pay-winning-wagers'
-    return 'record-road'
-  }
+  if (settlementState === 'not-started') return 'announce-final-result'
   if (settlementState === 'collecting-losing-wagers') {
     return 'collect-losing-wagers'
   }
@@ -390,7 +384,7 @@ export function buildDealerProcedurePlan({
       break
     case 'settling':
       activeStepId = revealComplete
-        ? activeSettlementStep(settlementState, settlementActions)
+        ? activeSettlementStep(settlementState)
         : revealStepId
       break
     case 'revealing':

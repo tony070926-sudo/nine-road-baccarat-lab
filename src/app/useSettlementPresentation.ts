@@ -36,6 +36,7 @@ interface ActiveSettlementPresentation {
 interface StartSettlementPresentationInput
   extends Omit<ActiveSettlementPresentation, 'state'> {
   awaitDealerSettlement: boolean
+  startAfter: Promise<unknown>
 }
 
 export function settlementPresentationHold(
@@ -62,7 +63,7 @@ export function settlementPresentationCopy(
 ): SettlementPresentationCopy {
   if (!state) return { heading: null, status: null }
   if (state === 'not-started') {
-    return { heading: '荷官正在核对本局筹码', status: '核对中' }
+    return { heading: '荷官正在宣读本局点数与胜方', status: '报点中' }
   }
   if (state === 'collecting-losing-wagers') {
     return { heading: '荷官正在收取输注', status: '收注中' }
@@ -100,6 +101,18 @@ const PRESENTATION_STATE_RANK: Readonly<
   complete: 6,
 }
 
+export function settlementRecordIsVisible(
+  roundId: string,
+  presentation: SettlementPresentation | null,
+): boolean {
+  return (
+    !presentation ||
+    presentation.roundId !== roundId ||
+    PRESENTATION_STATE_RANK[presentation.state] >=
+      PRESENTATION_STATE_RANK['recording-road']
+  )
+}
+
 /**
  * Owns only the post-commit table presentation. The caller remains responsible
  * for the durable settlement and keeps the table lease until `onComplete`.
@@ -110,6 +123,7 @@ export function useSettlementPresentation(latestRoundId: string | null) {
   const [cardSweepMotion, setCardSweepMotion] =
     useState<CardSweepMotionToken | null>(null)
   const [clearedRoundId, setClearedRoundId] = useState(latestRoundId)
+  const [readyRoundId, setReadyRoundId] = useState<string | null>(null)
   const activeRef = useRef<ActiveSettlementPresentation | null>(null)
   const timerRef = useRef<number | null>(null)
 
@@ -146,6 +160,7 @@ export function useSettlementPresentation(latestRoundId: string | null) {
       activeRef.current = null
       setCardSweepMotion(null)
       setClearedRoundId(roundId)
+      setReadyRoundId(null)
       setPresentation(null)
       active.onComplete()
     },
@@ -201,6 +216,7 @@ export function useSettlementPresentation(latestRoundId: string | null) {
       cardIds,
       profile,
       awaitDealerSettlement,
+      startAfter,
       onComplete,
     }: StartSettlementPresentationInput): boolean => {
       if (activeRef.current) return false
@@ -209,24 +225,25 @@ export function useSettlementPresentation(latestRoundId: string | null) {
         roundId,
         cardIds: [...cardIds],
         profile,
-        state: awaitDealerSettlement ? 'not-started' : 'recording-road',
+        state: 'not-started',
         onComplete,
       }
       activeRef.current = active
       setCardSweepMotion(null)
-      setPresentation({
-        roundId,
-        state: awaitDealerSettlement ? 'not-started' : 'recording-road',
-      })
-      if (!awaitDealerSettlement) {
-        timerRef.current = window.setTimeout(
-          () => startCardSweep(roundId),
-          settlementPresentationHold(ROAD_RECORD_HOLD_MS, profile),
-        )
+      setReadyRoundId(null)
+      setPresentation({ roundId, state: 'not-started' })
+      const beginPhysicalSettlement = () => {
+        if (activeRef.current !== active) return
+        if (awaitDealerSettlement) {
+          setReadyRoundId(roundId)
+        } else {
+          startRoadRecording(roundId)
+        }
       }
+      void startAfter.then(beginPhysicalSettlement, beginPhysicalSettlement)
       return true
     },
-    [startCardSweep],
+    [startRoadRecording],
   )
 
   const handleDealerSettlementStep = useCallback(
@@ -260,6 +277,7 @@ export function useSettlementPresentation(latestRoundId: string | null) {
     presentation,
     cardSweepMotion,
     clearedRoundId,
+    readyRoundId,
     startSettlementPresentation,
     handleDealerSettlementStep,
     handleDealerSettlementComplete,

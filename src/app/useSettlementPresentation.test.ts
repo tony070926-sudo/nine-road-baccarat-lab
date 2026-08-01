@@ -5,6 +5,7 @@ import {
   ROAD_RECORD_HOLD_MS,
   settlementPresentationHold,
   settlementPresentationCopy,
+  settlementRecordIsVisible,
   settlementStateForAction,
 } from './useSettlementPresentation'
 
@@ -29,7 +30,40 @@ describe('settlement presentation timing', () => {
     expect(settlementStateForAction('pay')).toBe('paying-winners')
   })
 
+  it('publishes a result to the road only when road recording begins', () => {
+    expect(settlementRecordIsVisible('round-1', null)).toBe(true)
+    expect(
+      settlementRecordIsVisible('round-1', {
+        roundId: 'round-2',
+        state: 'not-started',
+      }),
+    ).toBe(true)
+    for (const state of [
+      'not-started',
+      'collecting-losing-wagers',
+      'returning-pushed-wagers',
+      'paying-winners',
+    ] as const) {
+      expect(
+        settlementRecordIsVisible('round-1', { roundId: 'round-1', state }),
+      ).toBe(false)
+    }
+    for (const state of [
+      'recording-road',
+      'discarding-cards',
+      'complete',
+    ] as const) {
+      expect(
+        settlementRecordIsVisible('round-1', { roundId: 'round-1', state }),
+      ).toBe(true)
+    }
+  })
+
   it('keeps the dealer call aligned with road and discard phases', () => {
+    expect(settlementPresentationCopy('not-started', false)).toEqual({
+      heading: '荷官正在宣读本局点数与胜方',
+      status: '报点中',
+    })
     expect(settlementPresentationCopy('recording-road', false)).toEqual({
       heading: '荷官正在记录路单',
       status: '录单中',

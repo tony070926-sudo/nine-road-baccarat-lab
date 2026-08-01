@@ -27,6 +27,34 @@ const AMBIENT_LEVEL = 0.018
 const MASTER_LEVEL = 0.72
 const MAX_EVENT_IDS = 128
 export const AUDIO_SAMPLE_RETRY_MS = 600_000
+export const DEALER_CALL_FALLBACK_MS = 3_000
+export const DEALER_CALL_MAX_FALLBACK_MS = 4_500
+
+export type DealerCallCompletion =
+  | 'ended'
+  | 'error'
+  | 'timeout'
+  | 'cancelled'
+  | 'skipped'
+
+interface DealerCallRequest {
+  eventId: string
+  message: string
+  resolve: (completion: DealerCallCompletion) => void
+}
+
+interface ActiveDealerCall {
+  request: DealerCallRequest
+  utterance: SpeechSynthesisUtterance
+  timer: ReturnType<typeof globalThis.setTimeout> | null
+}
+
+export function dealerCallFallbackMs(text: string): number {
+  return Math.min(
+    DEALER_CALL_MAX_FALLBACK_MS,
+    Math.max(DEALER_CALL_FALLBACK_MS, [...text].length * 220),
+  )
+}
 
 export type CasinoAudioMixChannel =
   | 'master'
@@ -147,6 +175,12 @@ export class CasinoAudioDirector {
   private recentEventIds: string[] = []
   private recentEventSet = new Set<string>()
   private pendingEventIds = new Set<string>()
+  private dealerCallQueue: DealerCallRequest[] = []
+  private activeDealerCall: ActiveDealerCall | null = null
+  private dealerCallPromises = new Map<
+    string,
+    Promise<DealerCallCompletion>
+  >()
   private lastSqueezeAt = 0
   private pageVisible = true
   private lifecycleEpoch = 0
@@ -155,14 +189,11 @@ export class CasinoAudioDirector {
   private mix = loadAudioMix()
 
   setEnabled(enabled: boolean) {
-    if (!enabled) {
-      this.cancelDealerCall()
-    }
-
     if (this.enabled === enabled) {
       saveAudioPreference(enabled)
       return
     }
+    if (!enabled) this.cancelDealerCalls()
 
     this.enabled = enabled
     this.lifecycleEpoch += 1
@@ -187,6 +218,9 @@ export class CasinoAudioDirector {
 
   setMix(update: Partial<CasinoAudioMix>): CasinoAudioMix {
     this.mix = normalizeAudioMix({ ...this.mix, ...update })
+    if (this.mix.master === 0 || this.mix.voice === 0) {
+      this.cancelDealerCalls()
+    }
     saveAudioMix(this.mix)
     this.applyMix()
     return this.getMix()
@@ -282,11 +316,8 @@ export class CasinoAudioDirector {
   }
 
   async setPageVisible(visible: boolean) {
-    if (!visible) {
-      this.cancelDealerCall()
-    }
-
     if (this.pageVisible === visible) return
+    if (!visible) this.cancelDealerCalls()
 
     this.pageVisible = visible
     this.lifecycleEpoch += 1
@@ -625,18 +656,25 @@ export class CasinoAudioDirector {
     })
   }
 
-  playDealerCall(eventId: string, text: string) {
+  playDealerCall(
+    eventId: string,
+    text: string,
+  ): Promise<DealerCallCompletion> {
     const message = text.trim()
     const dealerEventId = `dealer-call:${eventId}`
+    const pending = this.dealerCallPromises.get(dealerEventId)
+    if (pending) return pending
     if (
       !message ||
       !this.enabled ||
       !this.pageVisible ||
+      this.mix.master === 0 ||
+      this.mix.voice === 0 ||
       typeof window === 'undefined' ||
       typeof SpeechSynthesisUtterance === 'undefined' ||
       this.recentEventSet.has(dealerEventId)
     ) {
-      return
+      return Promise.resolve('skipped')
     }
 
     try {
@@ -646,24 +684,25 @@ export class CasinoAudioDirector {
         typeof synthesis.speak !== 'function' ||
         typeof synthesis.cancel !== 'function'
       ) {
-        return
+        return Promise.resolve('skipped')
       }
 
-      const utterance = new SpeechSynthesisUtterance(message)
-      utterance.lang = 'zh-CN'
-      utterance.rate = 0.86
-      utterance.pitch = 0.72
-      utterance.volume = 0.58 * this.mix.voice * this.mix.master
-      const chineseVoice = synthesis
-        .getVoices()
-        .find((voice) => voice.lang.toLowerCase().startsWith('zh'))
-      if (chineseVoice) utterance.voice = chineseVoice
-
-      synthesis.cancel()
-      synthesis.speak(utterance)
+      let resolveCompletion!: (completion: DealerCallCompletion) => void
+      const completion = new Promise<DealerCallCompletion>((resolve) => {
+        resolveCompletion = resolve
+      })
+      this.dealerCallPromises.set(dealerEventId, completion)
       this.rememberEvent(dealerEventId)
+      this.dealerCallQueue.push({
+        eventId: dealerEventId,
+        message,
+        resolve: resolveCompletion,
+      })
+      this.drainDealerCallQueue()
+      return completion
     } catch {
       // Speech synthesis is an optional enhancement; table audio stays usable.
+      return Promise.resolve('skipped')
     }
   }
 
@@ -782,13 +821,108 @@ export class CasinoAudioDirector {
     if (oldest) this.recentEventSet.delete(oldest)
   }
 
-  private cancelDealerCall() {
-    if (typeof window === 'undefined') return
-    try {
-      window.speechSynthesis?.cancel()
-    } catch {
-      // Browsers may expose speechSynthesis before the implementation is ready.
+  cancelDealerCalls() {
+    const active = this.activeDealerCall
+    const queued = this.dealerCallQueue.splice(0)
+    this.activeDealerCall = null
+    if (active?.timer !== null && active?.timer !== undefined) {
+      globalThis.clearTimeout(active.timer)
     }
+    if (active || queued.length > 0) {
+      try {
+        window.speechSynthesis?.cancel()
+      } catch {
+        // Browsers may expose speech synthesis before it is fully ready.
+      }
+    }
+    if (active) this.completeDealerCall(active.request, 'cancelled')
+    queued.forEach((request) =>
+      this.completeDealerCall(request, 'cancelled'),
+    )
+  }
+
+  private drainDealerCallQueue() {
+    if (this.activeDealerCall || this.dealerCallQueue.length === 0) return
+    if (!this.enabled || !this.pageVisible) {
+      this.cancelDealerCalls()
+      return
+    }
+
+    const request = this.dealerCallQueue.shift()
+    if (!request) return
+    try {
+      const synthesis = window.speechSynthesis
+      if (!synthesis || typeof synthesis.speak !== 'function') {
+        this.completeDealerCall(request, 'skipped')
+        this.drainDealerCallQueue()
+        return
+      }
+
+      const utterance = new SpeechSynthesisUtterance(request.message)
+      utterance.lang = 'zh-CN'
+      utterance.rate = 0.86
+      utterance.pitch = 0.72
+      utterance.volume = 0.58 * this.mix.voice * this.mix.master
+      const chineseVoice =
+        typeof synthesis.getVoices === 'function'
+          ? synthesis
+              .getVoices()
+              .find((voice) => voice.lang.toLowerCase().startsWith('zh'))
+          : undefined
+      if (chineseVoice) utterance.voice = chineseVoice
+
+      const active: ActiveDealerCall = {
+        request,
+        utterance,
+        timer: null,
+      }
+      this.activeDealerCall = active
+      utterance.onend = () => this.finishActiveDealerCall(active, 'ended')
+      utterance.onerror = () => this.finishActiveDealerCall(active, 'error')
+      active.timer = globalThis.setTimeout(
+        () => this.finishActiveDealerCall(active, 'timeout'),
+        dealerCallFallbackMs(request.message),
+      )
+      synthesis.speak(utterance)
+    } catch {
+      const active = this.activeDealerCall
+      if (active?.request === request) {
+        this.finishActiveDealerCall(active, 'error')
+      } else {
+        this.completeDealerCall(request, 'error')
+        this.drainDealerCallQueue()
+      }
+    }
+  }
+
+  private finishActiveDealerCall(
+    active: ActiveDealerCall,
+    completion: Exclude<DealerCallCompletion, 'cancelled' | 'skipped'>,
+  ) {
+    if (this.activeDealerCall !== active) return
+    this.activeDealerCall = null
+    if (active.timer !== null) globalThis.clearTimeout(active.timer)
+    if (completion === 'timeout') {
+      try {
+        window.speechSynthesis?.cancel()
+      } catch {
+        // The completion ticket still releases the table when speech is stuck.
+      }
+    }
+    this.completeDealerCall(active.request, completion)
+    if (completion === 'timeout') {
+      globalThis.queueMicrotask(() => this.drainDealerCallQueue())
+    } else {
+      this.drainDealerCallQueue()
+    }
+  }
+
+  private completeDealerCall(
+    request: DealerCallRequest,
+    completion: DealerCallCompletion,
+  ) {
+    this.dealerCallPromises.delete(request.eventId)
+    request.resolve(completion)
   }
 
   private ensureGraph(): AudioGraph {

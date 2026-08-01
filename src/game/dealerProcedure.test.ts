@@ -310,7 +310,7 @@ describe('buildDealerProcedurePlan', () => {
     const expected: Array<
       [DealerProcedureSettlementState, DealerProcedureStepKind]
     > = [
-      ['not-started', 'collect-losing-wagers'],
+      ['not-started', 'announce-final-result'],
       ['collecting-losing-wagers', 'collect-losing-wagers'],
       ['returning-pushed-wagers', 'return-pushed-wagers'],
       ['paying-winners', 'pay-winning-wagers'],
@@ -372,7 +372,7 @@ describe('buildDealerProcedurePlan', () => {
     expect(kinds(pushOnly)).not.toContain('collect-losing-wagers')
     expect(kinds(pushOnly)).toContain('return-pushed-wagers')
     expect(kinds(pushOnly)).not.toContain('pay-winning-wagers')
-    expect(activeId(pushOnly)).toBe('return-pushed-wagers')
+    expect(activeId(pushOnly)).toBe('announce-final-result')
   })
 
   it('refuses to advance into settlement while cards remain hidden', () => {
