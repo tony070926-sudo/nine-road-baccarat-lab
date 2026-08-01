@@ -1,0 +1,203 @@
+.dealer-procedure-track {
+  --dealer-track-accent: #d9b76e;
+  --dealer-track-complete: #72b79a;
+  --dealer-track-panel: rgba(8, 23, 22, 0.92);
+  --dealer-track-border: rgba(219, 192, 126, 0.24);
+  border: 1px solid var(--dealer-track-border);
+  border-radius: 0.8rem;
+  background: var(--dealer-track-panel);
+  color: #f8f0dc;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.dealer-procedure-track__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem 0.45rem;
+  border-bottom: 1px solid rgba(219, 192, 126, 0.14);
+}
+
+.dealer-procedure-track__header > strong {
+  color: #fff8e7;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.dealer-procedure-track__header > small {
+  color: var(--dealer-track-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dealer-procedure-track__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dealer-procedure-track__steps {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(8rem, 1fr);
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.55rem 0.65rem 0.7rem;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: rgba(217, 183, 110, 0.38) transparent;
+  scrollbar-width: thin;
+  scroll-snap-type: inline proximity;
+}
+
+.dealer-procedure-track__step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.45rem minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 0.18rem 0.42rem;
+  min-height: 4.25rem;
+  padding: 0.5rem;
+  border: 1px solid rgba(237, 224, 191, 0.13);
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.025);
+  scroll-snap-align: center;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.dealer-procedure-track__marker {
+  display: inline-grid;
+  grid-row: 1 / span 2;
+  place-items: center;
+  align-self: start;
+  width: 1.45rem;
+  height: 1.45rem;
+  border: 1px solid rgba(237, 224, 191, 0.24);
+  border-radius: 999px;
+  color: rgba(248, 240, 220, 0.68);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.dealer-procedure-track__copy {
+  display: grid;
+  align-content: start;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.dealer-procedure-track__copy > strong {
+  color: #f8f0dc;
+  font-size: 0.76rem;
+  line-height: 1.2;
+}
+
+.dealer-procedure-track__copy > small {
+  color: rgba(237, 229, 208, 0.66);
+  font-size: 0.62rem;
+  line-height: 1.25;
+}
+
+.dealer-procedure-track__state {
+  align-self: end;
+  justify-self: start;
+  padding: 0.08rem 0.32rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(237, 229, 208, 0.68);
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.dealer-procedure-track__step--completed {
+  border-color: rgba(114, 183, 154, 0.25);
+  background: rgba(58, 129, 101, 0.08);
+}
+
+.dealer-procedure-track__step--completed .dealer-procedure-track__marker {
+  border-color: var(--dealer-track-complete);
+  background: rgba(114, 183, 154, 0.14);
+  color: #9ee0c2;
+}
+
+.dealer-procedure-track__step--completed .dealer-procedure-track__state {
+  color: #9ed6bd;
+}
+
+.dealer-procedure-track__step--current {
+  border-color: rgba(217, 183, 110, 0.75);
+  background: rgba(217, 183, 110, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(217, 183, 110, 0.12);
+}
+
+.dealer-procedure-track__step--current .dealer-procedure-track__marker {
+  border-color: var(--dealer-track-accent);
+  background: var(--dealer-track-accent);
+  color: #13201d;
+  animation: dealer-procedure-current 1.8s ease-in-out infinite;
+}
+
+.dealer-procedure-track__step--current .dealer-procedure-track__state {
+  background: rgba(217, 183, 110, 0.16);
+  color: #f2d696;
+}
+
+.dealer-procedure-track__step--pending {
+  border-color: rgba(237, 224, 191, 0.09);
+}
+
+@keyframes dealer-procedure-current {
+  50% {
+    box-shadow: 0 0 0 0.22rem rgba(217, 183, 110, 0.13);
+    transform: scale(1.04);
+  }
+}
+
+@media (max-width: 640px) {
+  .dealer-procedure-track__header {
+    padding-inline: 0.65rem;
+  }
+
+  .dealer-procedure-track__steps {
+    grid-auto-columns: minmax(7.6rem, 42vw);
+    padding-inline: 0.55rem;
+  }
+
+  .dealer-procedure-track__step {
+    min-height: 4rem;
+    padding: 0.45rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dealer-procedure-track__steps {
+    scroll-behavior: auto;
+    scroll-snap-type: none;
+  }
+
+  .dealer-procedure-track__step {
+    transition: none;
+  }
+
+  .dealer-procedure-track__step--current .dealer-procedure-track__marker {
+    animation: none;
+  }
+}
