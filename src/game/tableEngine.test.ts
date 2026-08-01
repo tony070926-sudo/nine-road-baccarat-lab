@@ -44,6 +44,7 @@ function preparedState(
   return prepareRoundState(state, {
     bets: PLAYER_BETS,
     playMode: 'bet',
+    revealControl: 'player-squeeze',
     roundId,
   })
 }
@@ -100,6 +101,7 @@ describe('tableEngine', () => {
       balanceBefore: current.game.balance,
       sourceShoeId: current.game.shoe.id,
       sourceCursor: current.game.shoe.cursor,
+      revealControl: 'player-squeeze',
     })
     expect(next.pending?.shoeAfter.handNumber).toBe(1)
   })
@@ -207,6 +209,7 @@ describe('tableEngine', () => {
     const flyPrepared = prepareRoundState(wagered, {
       bets: EMPTY_BETS,
       playMode: 'fly',
+      revealControl: 'dealer-reveal',
       roundId: 'round-engine-fly',
     })
     const flyReady = fullyReveal(flyPrepared)
@@ -230,6 +233,7 @@ describe('tableEngine', () => {
         prepareRoundState(pending, {
           bets: PLAYER_BETS,
           playMode: 'bet',
+          revealControl: 'player-squeeze',
           roundId: 'round-engine-2',
         }),
       'round-in-progress',
@@ -308,6 +312,7 @@ describe('tableEngine', () => {
         prepareRoundState(settled, {
           bets: PLAYER_BETS,
           playMode: 'bet',
+          revealControl: 'player-squeeze',
           roundId: 'round-engine-1',
         }),
       'duplicate-round',

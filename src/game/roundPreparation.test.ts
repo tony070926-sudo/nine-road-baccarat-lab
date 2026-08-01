@@ -25,10 +25,12 @@ describe('preparePendingRound', () => {
       game: current,
       bets: { ...EMPTY_BETS, player: 100 },
       playMode: 'bet',
+      revealControl: 'player-squeeze',
       roundId: 'round-locked',
     })
 
     expect(pending.id).toBe('round-locked')
+    expect(pending.revealControl).toBe('player-squeeze')
     expect(pending.sourceCursor).toBe(current.shoe.cursor)
     expect(pending.shoeAfter.cursor).toBe(
       current.shoe.cursor + pending.result.cardsUsed,
@@ -45,6 +47,7 @@ describe('preparePendingRound', () => {
         game: current,
         bets: { ...EMPTY_BETS, tie: 1_010 },
         playMode: 'bet',
+        revealControl: 'dealer-reveal',
         roundId: 'round-over-limit',
       }),
     ).toThrow(/上限/)
@@ -53,8 +56,53 @@ describe('preparePendingRound', () => {
         game: current,
         bets: { ...EMPTY_BETS, player: 10 },
         playMode: 'fly',
+        revealControl: 'dealer-reveal',
         roundId: 'round-invalid-fly',
       }),
     ).toThrow(/fly mode/)
+  })
+
+  it('rejects player squeeze control for a fly round', () => {
+    expect(() =>
+      preparePendingRound({
+        game: game(),
+        bets: { ...EMPTY_BETS },
+        playMode: 'fly',
+        revealControl: 'player-squeeze',
+        roundId: 'round-invalid-control',
+      }),
+    ).toThrow(/requires dealer reveal/)
+  })
+
+  it('rejects unknown reveal controls at the runtime boundary', () => {
+    expect(() =>
+      preparePendingRound({
+        game: game(),
+        bets: { ...EMPTY_BETS, player: 100 },
+        playMode: 'bet',
+        revealControl: 'future-mode' as never,
+        roundId: 'round-invalid-unknown-control',
+      }),
+    ).toThrow(/invalid reveal control/)
+  })
+
+  it('persists legacy-compatible defaults even when the caller omits control', () => {
+    const wagered = preparePendingRound({
+      game: game(),
+      bets: { ...EMPTY_BETS, banker: 100 },
+      playMode: 'bet',
+      roundId: 'round-default-player-control',
+    })
+    const fly = preparePendingRound({
+      game: game(),
+      bets: { ...EMPTY_BETS },
+      playMode: 'fly',
+      roundId: 'round-default-dealer-control',
+    })
+
+    expect(wagered.revealControl).toBe('player-squeeze')
+    expect(fly.revealControl).toBe('dealer-reveal')
+    expect(Object.hasOwn(wagered, 'revealControl')).toBe(true)
+    expect(Object.hasOwn(fly, 'revealControl')).toBe(true)
   })
 })

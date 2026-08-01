@@ -87,6 +87,7 @@ function makeValidPending(seed = 73): PersistedPendingRound {
     version: 1,
     id: 'pending-1',
     playMode: 'bet',
+    revealControl: 'player-squeeze',
     bets: { ...EMPTY_BETS, player: 100 },
     balanceBefore: 10_000,
     sourceShoeId: sourceShoe.id,
@@ -207,6 +208,36 @@ describe('isPersistedGameState', () => {
 describe('isPersistedPendingRound', () => {
   it('accepts a valid persisted pending round', () => {
     expect(isPersistedPendingRound(makeValidPending())).toBe(true)
+  })
+
+  it('accepts legacy pending rounds and derives safe reveal defaults', () => {
+    const wagered = structuredClone(makeValidPending())
+    delete wagered.revealControl
+    expect(isPersistedPendingRound(wagered)).toBe(true)
+
+    const fly = structuredClone(makeValidPending())
+    fly.playMode = 'fly'
+    fly.bets = { ...EMPTY_BETS }
+    delete fly.revealControl
+    expect(isPersistedPendingRound(fly)).toBe(true)
+  })
+
+  it('rejects player squeeze control on a fly round', () => {
+    const pending = structuredClone(makeValidPending())
+    pending.playMode = 'fly'
+    pending.bets = { ...EMPTY_BETS }
+    pending.revealControl = 'player-squeeze'
+
+    expect(isPersistedPendingRound(pending)).toBe(false)
+  })
+
+  it('rejects an unknown persisted reveal control', () => {
+    const pending = {
+      ...makeValidPending(),
+      revealControl: 'future-mode',
+    }
+
+    expect(isPersistedPendingRound(pending)).toBe(false)
   })
 
   it('rejects a one-billion-point pending wager', () => {

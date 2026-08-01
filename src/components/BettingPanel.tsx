@@ -4,7 +4,7 @@ import { ChipDragLayer } from './ChipDragLayer'
 import { ChipStackVisual } from './ChipStackVisual'
 import { TABLE_LIMITS, totalBets } from '../game/baccarat'
 import type { WagerChipLedger } from '../game/chipPhysics'
-import type { Bets, PlayMode } from '../types'
+import type { Bets, PlayMode, RevealControl } from '../types'
 
 const BET_LABELS: Record<keyof Bets, string> = {
   player: '闲',
@@ -36,6 +36,8 @@ interface BettingPanelProps {
   isDealing: boolean
   isSettling: boolean
   dealingMode: PlayMode | null
+  revealControl: RevealControl
+  canSqueeze: boolean
   error: string | null
   hasLastBets: boolean
   onSelectChip: (chip: number) => void
@@ -47,6 +49,7 @@ interface BettingPanelProps {
   onRemoveLastBet: (target: keyof Bets) => boolean | void
   onClear: () => void
   onRepeat: () => void
+  onRevealControlChange: (control: RevealControl) => void
   onFly: () => void
   onDeal: () => void
 }
@@ -70,6 +73,8 @@ export function BettingPanel({
   isDealing,
   isSettling,
   dealingMode,
+  revealControl,
+  canSqueeze,
   error,
   hasLastBets,
   onSelectChip,
@@ -77,6 +82,7 @@ export function BettingPanel({
   onRemoveLastBet,
   onClear,
   onRepeat,
+  onRevealControlChange,
   onFly,
   onDeal,
 }: BettingPanelProps) {
@@ -188,6 +194,50 @@ export function BettingPanel({
             重复
           </button>
         </div>
+
+        <fieldset
+          className="reveal-control"
+          data-reveal-control={revealControl}
+          disabled={isDealing || !canSqueeze}
+          aria-describedby="reveal-control-hint"
+        >
+          <legend>本局开牌方式</legend>
+          <div className="reveal-control-options">
+            <label
+              className={
+                revealControl === 'player-squeeze' ? 'is-selected' : ''
+              }
+            >
+              <input
+                type="radio"
+                name="reveal-control"
+                value="player-squeeze"
+                checked={revealControl === 'player-squeeze'}
+                onChange={() => onRevealControlChange('player-squeeze')}
+              />
+              <span>自己咪牌</span>
+            </label>
+            <label
+              className={
+                revealControl === 'dealer-reveal' ? 'is-selected' : ''
+              }
+            >
+              <input
+                type="radio"
+                name="reveal-control"
+                value="dealer-reveal"
+                checked={revealControl === 'dealer-reveal'}
+                onChange={() => onRevealControlChange('dealer-reveal')}
+              />
+              <span>荷官开牌</span>
+            </label>
+          </div>
+          <small id="reveal-control-hint" aria-live="polite">
+            {canSqueeze
+              ? '只改变谁开牌，不改变结果'
+              : '仅庄／闲主注可申请咪牌'}
+          </small>
+        </fieldset>
 
         <div className="chip-rack-console">
           <div>

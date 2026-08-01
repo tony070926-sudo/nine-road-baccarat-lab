@@ -3,10 +3,28 @@ import type {
   Card,
   DealResult,
   PlayMode,
+  RevealControl,
 } from '../types'
 
 const OPENING_CARD_COUNT = 4
 export type RevealSide = 'player' | 'banker'
+
+interface RevealControlSource {
+  playMode: PlayMode
+  revealControl?: RevealControl
+}
+
+/**
+ * Legacy v1 journals predate an explicit reveal choice. Preserve their
+ * original behavior for wagered rounds while keeping fly rounds dealer-run.
+ */
+export function resolveRevealControl({
+  playMode,
+  revealControl,
+}: RevealControlSource): RevealControl {
+  return revealControl ??
+    (playMode === 'fly' ? 'dealer-reveal' : 'player-squeeze')
+}
 
 export function revealSideForCard(
   result: DealResult,
@@ -18,14 +36,21 @@ export function revealSideForCard(
 }
 
 /**
- * The single simulated seated player may squeeze only the hand covered by a
- * main Player or Banker wager. Side-bet-only and fly rounds are dealer-opened.
+ * When player squeeze is selected, the single simulated seated player may
+ * reveal only the hand covered by a main Player or Banker wager. Dealer reveal,
+ * side-bet-only, and fly rounds have no player-controlled sides.
  */
 export function manualRevealSides(
   bets: Bets,
   playMode: PlayMode,
+  revealControl?: RevealControl,
 ): RevealSide[] {
-  if (playMode === 'fly') return []
+  if (
+    playMode === 'fly' ||
+    resolveRevealControl({ playMode, revealControl }) === 'dealer-reveal'
+  ) {
+    return []
+  }
 
   const sides: RevealSide[] = []
   if (bets.player > 0) sides.push('player')

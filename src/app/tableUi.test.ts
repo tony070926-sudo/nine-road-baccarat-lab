@@ -6,7 +6,11 @@ import {
   dealRound,
 } from '../game/baccarat'
 import type { PendingRound, RoundRecord, Winner } from '../types'
-import { derivePendingRoundView, summarizeShoeRecords } from './tableUi'
+import {
+  derivePendingRoundView,
+  roundRevealInstruction,
+  summarizeShoeRecords,
+} from './tableUi'
 
 function pendingRound(): PendingRound {
   const shoe = createShoe(createSeededRandomInt(42), 'TABLE-UI-SHOE')
@@ -14,6 +18,7 @@ function pendingRound(): PendingRound {
   return {
     id: 'table-ui-round',
     playMode: 'bet',
+    revealControl: 'player-squeeze',
     bets: { ...EMPTY_BETS, player: 100 },
     balanceBefore: 10_000,
     sourceShoeId: shoe.id,
@@ -84,6 +89,15 @@ describe('table UI selectors', () => {
     expect(view.completedCards).toEqual([])
     expect(view.nextCard).toBeNull()
     expect(view.displayTotal).toBe(0)
+  })
+
+  it('keeps a wagered dealer-reveal round fully automatic', () => {
+    const round = { ...pendingRound(), revealControl: 'dealer-reveal' as const }
+    const view = derivePendingRoundView(round, 0)
+
+    expect(view.manualSides).toEqual([])
+    expect(view.nextRequiresUser).toBe(false)
+    expect(roundRevealInstruction(round)).toContain('已拒绝接牌')
   })
 
   it('summarizes winners, naturals and pairs in one selector', () => {

@@ -7,6 +7,7 @@ const TABLE_V2_KEY = 'nine-road-baccarat:table:v2'
 interface StoredRoundSnapshot {
   id: string
   revealedCount: number
+  revealControl?: 'player-squeeze' | 'dealer-reveal'
 }
 
 interface StoredGameSnapshot {
@@ -22,6 +23,33 @@ export function collectRuntimeErrors(page: Page): string[] {
     if (message.type() === 'error') errors.push(`console: ${message.text()}`)
   })
   return errors
+}
+
+export async function stubLeaderboardWrites(page: Page): Promise<void> {
+  await page.route('**/api/leaderboard', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue()
+      return
+    }
+    const submission = route.request().postDataJSON() as {
+      displayName: string
+      highestBalance: number
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'X-Leaderboard-Integrity': 'self-reported-unverified' },
+      body: JSON.stringify({
+        integrity: 'self-reported-unverified',
+        entry: {
+          rank: 1,
+          displayName: submission.displayName,
+          highestBalance: submission.highestBalance,
+          achievedAt: '2026-08-01T12:00:00.000Z',
+        },
+      }),
+    })
+  })
 }
 
 export async function openFreshTable(page: Page): Promise<void> {
@@ -51,12 +79,17 @@ export async function readStoredPending(
       const v2Raw = localStorage.getItem(tableV2Key)
       if (v2Raw) {
         const envelope = JSON.parse(v2Raw) as {
-          pending?: { id?: string; revealedCount?: number } | null
+          pending?: {
+            id?: string
+            revealedCount?: number
+            revealControl?: 'player-squeeze' | 'dealer-reveal'
+          } | null
         }
         if (!envelope.pending?.id) return null
         return {
           id: envelope.pending.id,
           revealedCount: envelope.pending.revealedCount ?? 0,
+          revealControl: envelope.pending.revealControl,
         }
       }
 
@@ -65,8 +98,13 @@ export async function readStoredPending(
       const pending = JSON.parse(legacyRaw) as {
         id: string
         revealedCount: number
+        revealControl?: 'player-squeeze' | 'dealer-reveal'
       }
-      return { id: pending.id, revealedCount: pending.revealedCount }
+      return {
+        id: pending.id,
+        revealedCount: pending.revealedCount,
+        revealControl: pending.revealControl,
+      }
     },
     { legacyPendingKey: LEGACY_PENDING_KEY, tableV2Key: TABLE_V2_KEY },
   )

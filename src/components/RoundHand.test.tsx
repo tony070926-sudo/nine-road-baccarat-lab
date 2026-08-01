@@ -43,6 +43,7 @@ const settledRound: RoundRecord = {
 const pendingRound: PendingRound = {
   id: 'round-next',
   playMode: 'bet',
+  revealControl: 'player-squeeze',
   bets: settledRound.bets,
   balanceBefore: settledRound.balanceAfter,
   sourceShoeId: 'shoe-1',

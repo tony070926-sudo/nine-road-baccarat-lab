@@ -145,6 +145,7 @@ import {
   manualRevealSides,
   nextRevealCard,
   openingDealCardIds,
+  resolveRevealControl,
   revealOrder,
   revealIsComplete,
   revealSideForCard,
@@ -168,6 +169,7 @@ import type {
   PendingRound,
   PersistedGameState,
   PlayMode,
+  RevealControl,
   ShoeState,
 } from './types'
 import './styles.css'
@@ -191,6 +193,7 @@ function App() {
   const [settlementWagerChipLedger, setSettlementWagerChipLedger] =
     useState<WagerChipLedger | null>(null)
   const [selectedChip, setSelectedChip] = useState(100)
+  const [revealControl, setRevealControl] = useState<RevealControl>(initialSession.pendingRound?.revealControl ?? 'player-squeeze')
   const [audioEnabled, setAudioEnabled] = useState(loadAudioPreference)
   const [audioMix, setAudioMix] = useState(() => casinoAudio.getMix())
   const {
@@ -352,6 +355,11 @@ function App() {
     newShoeMotion?.roundIntent?.bets ??
     roundPrelude?.bets ??
     bets
+  const selectedRevealControl: RevealControl = displayedBets.player > 0 || displayedBets.banker > 0 ? revealControl : 'dealer-reveal'
+  const activeRevealRound = newShoeMotion?.roundIntent?.pending ?? roundPrelude?.pending ?? pendingRound
+  const displayedRevealControl = activeRevealRound
+    ? resolveRevealControl(activeRevealRound) : selectedRevealControl
+  const displayedCanSqueeze = displayedBets.player > 0 || displayedBets.banker > 0
   const displayedWagerChipLedger =
     settlementWagerChipLedger ?? wagerChipLedger
   const isLockingBets = roundPrelude !== null
@@ -447,6 +455,7 @@ function App() {
       setRevealedCount(restoredCount)
       setDealtCardIds(restoredDealtIds)
       setBets({ ...restoredRound.bets })
+      setRevealControl(resolveRevealControl(restoredRound))
       const restoredLedger = rebuildWagerChipLedger(restoredRound.bets)
       wagerChipLedgerRef.current = restoredLedger
       setWagerChipLedger(restoredLedger)
@@ -457,7 +466,9 @@ function App() {
             ? '完整牌面与锁定下注已恢复，正在完成结算。'
             : restoredRound.playMode === 'fly'
               ? '飞牌对局已恢复，荷官将继续自动开牌。'
-              : '已锁定下注对局已恢复，将按下注侧继续翻牌。'
+              : resolveRevealControl(restoredRound) === 'dealer-reveal'
+                ? '已锁定下注对局已恢复，荷官将继续开牌。'
+                : '已锁定下注对局已恢复，将按下注侧继续咪牌。'
           : '另一标签页正在控制这局牌；当前页面只读取单一权威快照并等待同步。',
       )
 
@@ -977,10 +988,9 @@ function App() {
         `${current.id}:dealer-call:auto:${revealedCountRef.current}`,
         '飞牌，自动开牌',
       )
-    } else if (
-      nextSide &&
-      manualRevealSides(current.bets, current.playMode).includes(nextSide)
-    ) {
+    } else if (nextSide && manualRevealSides(
+      current.bets, current.playMode, current.revealControl,
+    ).includes(nextSide)) {
       casinoAudio.playDealerCall(
         `${current.id}:dealer-call:open:${revealedCountRef.current}`,
         `${revealSideLabel(nextSide)}请开牌`,
@@ -1238,7 +1248,7 @@ function App() {
         ? buildSettlementCheer({
             winner: current.result.winner,
             settlementNet: settlement.net,
-            manualSides: manualRevealSides(current.bets, current.playMode),
+            manualSides: manualRevealSides(current.bets, current.playMode, current.revealControl),
           })
         : null
     const nextGame = committed.snapshot.game
@@ -1442,7 +1452,9 @@ function App() {
     setRevealAnnouncement(
       intent.playMode === 'fly'
         ? '飞牌请求已锁定。荷官示意停止下注后开始本局。'
-        : '本局筹码已锁定。荷官正在示意停止下注。',
+        : resolveRevealControl(intent.pending) === 'dealer-reveal'
+          ? '本局筹码已锁定。你已拒绝接牌，本局由荷官开牌。'
+          : '本局筹码已锁定。本局由你咪下注侧牌面。',
     )
     casinoAudio.playRoundOpen(`${intent.id}:round-open`)
     casinoAudio.playDealerCall(
@@ -1571,7 +1583,8 @@ function App() {
     )
   }
 
-  const requestRound = async (roundBets: Bets, playMode: PlayMode) => {
+  const requestRound = async (roundBets: Bets, playMode: PlayMode,
+    requestedRevealControl: RevealControl) => {
     if (
       roundLockRef.current ||
       settlementLockRef.current ||
@@ -1667,6 +1680,7 @@ function App() {
       preparedState = prepareRoundState(preparedState, {
         bets: roundBets,
         playMode,
+        revealControl: requestedRevealControl,
         roundId: createRoundId(),
       })
     } catch {
@@ -1869,7 +1883,8 @@ function App() {
     const playerRevealedThisCard =
       completedActor === 'user' &&
       current.playMode === 'bet' &&
-      manualRevealSides(current.bets, current.playMode).includes(revealedSide)
+      manualRevealSides(current.bets, current.playMode, current.revealControl)
+        .includes(revealedSide)
     if (playerRevealedThisCard) {
       const publicCards = revealedCards(current.result, nextCount)
       const publicSideCards = revealedCardsForSide(
@@ -1965,9 +1980,8 @@ function App() {
         : null
     const requiresUser =
       current && expectedSide
-        ? manualRevealSides(current.bets, current.playMode).includes(
-            expectedSide,
-          )
+        ? manualRevealSides(current.bets, current.playMode, current.revealControl)
+          .includes(expectedSide)
         : false
 
     if (
@@ -2134,7 +2148,18 @@ function App() {
       return
     }
 
-    requestRound({ ...bets }, 'bet')
+    requestRound({ ...bets }, 'bet', selectedRevealControl)
+  }
+
+  const handleRevealControlChange = (control: RevealControl) => {
+    if (isDealing) return
+    setRevealControl(control)
+    setFormError(null)
+    setRevealAnnouncement(
+      control === 'dealer-reveal'
+        ? '本局将拒绝接牌，由荷官依次开牌；牌靴与结果不会改变。'
+        : '本局由你咪庄或闲主注对应牌面；另一侧由荷官开牌。',
+    )
   }
 
   const handleFly = () => {
@@ -2143,7 +2168,7 @@ function App() {
       return
     }
 
-    requestRound({ ...EMPTY_BETS }, 'fly')
+    requestRound({ ...EMPTY_BETS }, 'fly', 'dealer-reveal')
   }
 
   const replaceShoe = async () => {
@@ -2717,6 +2742,8 @@ function App() {
                 isDealing={isDealing}
                 isSettling={settlementPresentation !== null}
                 dealingMode={dealingMode}
+                revealControl={displayedRevealControl}
+                canSqueeze={displayedCanSqueeze}
                 error={formError}
                 hasLastBets={totalBets(game.lastBets) > 0}
                 onSelectChip={setSelectedChip}
@@ -2728,6 +2755,7 @@ function App() {
                   setFormError(null)
                 }}
                 onRepeat={handleRepeat}
+                onRevealControlChange={handleRevealControlChange}
                 onFly={handleFly}
                 onDeal={handleDeal}
               />
@@ -2735,7 +2763,7 @@ function App() {
               <div className="stage-rule-note casino-rail-note">
                 <span>真实无放回牌靴</span>
                 <i />
-                <span>玩家只翻下注侧</span>
+                <span>下注侧可选自己咪牌或荷官开牌</span>
                 <i />
                 <span>纯模拟 · 无真钱</span>
               </div>

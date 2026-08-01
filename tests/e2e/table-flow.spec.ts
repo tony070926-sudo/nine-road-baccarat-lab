@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   collectRuntimeErrors,
   finishRoundWithKeyboard,
@@ -7,7 +7,28 @@ import {
   readStoredGame,
   readStoredPending,
   startPlayerRound,
+  stubLeaderboardWrites,
 } from './support/gameFixture'
+
+async function waitForDealerControlledRound(
+  page: Page,
+  expectedHistoryLength: number,
+): Promise<number> {
+  let maximumManualCardCount = 0
+  await expect
+    .poll(
+      async () => {
+        maximumManualCardCount = Math.max(
+          maximumManualCardCount,
+          await page.locator('.reveal-card.can-flip:not(:disabled)').count(),
+        )
+        return (await readStoredGame(page)).historyLength
+      },
+      { timeout: 35_000, intervals: [20, 40, 80] },
+    )
+    .toBe(expectedHistoryLength)
+  return maximumManualCardCount
+}
 
 test('completes a keyboard round without duplicate settlement @cross-browser', async ({
   page,
@@ -15,30 +36,7 @@ test('completes a keyboard round without duplicate settlement @cross-browser', a
   // This assertion owns the core table runtime boundary. Keep the unrelated
   // public leaderboard deterministic so shared-IP quotas from other browser
   // contexts cannot turn a handled 429 into browser console noise here.
-  await page.route('**/api/leaderboard', async (route) => {
-    if (route.request().method() !== 'POST') {
-      await route.continue()
-      return
-    }
-    const submission = route.request().postDataJSON() as {
-      displayName: string
-      highestBalance: number
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      headers: { 'X-Leaderboard-Integrity': 'self-reported-unverified' },
-      body: JSON.stringify({
-        integrity: 'self-reported-unverified',
-        entry: {
-          rank: 1,
-          displayName: submission.displayName,
-          highestBalance: submission.highestBalance,
-          achievedAt: '2026-08-01T12:00:00.000Z',
-        },
-      }),
-    })
-  })
+  await stubLeaderboardWrites(page)
   const runtimeErrors = collectRuntimeErrors(page)
   await openFreshTable(page)
   const before = await readStoredGame(page)
@@ -70,7 +68,123 @@ test('completes a keyboard round without duplicate settlement @cross-browser', a
   expect(runtimeErrors).toEqual([])
 })
 
-test('keeps the mobile table within the viewport and exposes no serious axe violations', async ({
+test('lets a wagered player hand the full round to the dealer @cross-browser', async ({
+  page,
+}) => {
+  await stubLeaderboardWrites(page)
+  const runtimeErrors = collectRuntimeErrors(page)
+  await openFreshTable(page)
+  const before = await readStoredGame(page)
+  const revealControl = page.locator('.reveal-control')
+
+  await expect(revealControl).toHaveAttribute(
+    'data-reveal-control',
+    'dealer-reveal',
+  )
+  await expect(page.getByRole('radio', { name: '荷官开牌' })).toBeDisabled()
+
+  await page.locator('[data-bet-target="player"]').click()
+  await expect(revealControl).toHaveAttribute(
+    'data-reveal-control',
+    'player-squeeze',
+  )
+  const playerControl = page.getByRole('radio', { name: '自己咪牌' })
+  const dealerControl = page.getByRole('radio', { name: '荷官开牌' })
+  await playerControl.focus()
+  await playerControl.press('ArrowRight')
+  await expect(dealerControl).toBeChecked()
+  await dealerControl.press('ArrowLeft')
+  await expect(playerControl).toBeChecked()
+  await page.getByText('荷官开牌', { exact: true }).click()
+  await expect(dealerControl).toBeChecked()
+  await page.getByRole('button', { name: /确认下注/ }).click()
+
+  await expect.poll(() => readStoredPending(page)).not.toBeNull()
+  expect((await readStoredPending(page))?.revealControl).toBe('dealer-reveal')
+
+  expect(
+    await waitForDealerControlledRound(page, before.historyLength + 1),
+  ).toBe(0)
+  expect(await readStoredPending(page)).toBeNull()
+  await expect(page.locator('[data-table-phase]')).toHaveAttribute(
+    'data-table-phase',
+    'betting',
+  )
+  expect(runtimeErrors).toEqual([])
+})
+
+test('keeps side-bet-only and fly rounds dealer controlled', async ({ page }) => {
+  await stubLeaderboardWrites(page)
+  await openFreshTable(page)
+  const before = await readStoredGame(page)
+
+  await page.locator('[data-bet-target="tie"]').click()
+  await expect(page.locator('.reveal-control')).toHaveAttribute(
+    'data-reveal-control',
+    'dealer-reveal',
+  )
+  await expect(page.getByRole('radio', { name: '荷官开牌' })).toBeDisabled()
+  await page.getByRole('button', { name: /确认下注/ }).click()
+  await expect.poll(() => readStoredPending(page)).not.toBeNull()
+  expect((await readStoredPending(page))?.revealControl).toBe('dealer-reveal')
+  expect(
+    await waitForDealerControlledRound(page, before.historyLength + 1),
+  ).toBe(0)
+
+  await page.getByRole('button', { name: /飞牌/ }).click()
+  await expect.poll(() => readStoredPending(page)).not.toBeNull()
+  expect((await readStoredPending(page))?.revealControl).toBe('dealer-reveal')
+  expect(
+    await waitForDealerControlledRound(page, before.historyLength + 2),
+  ).toBe(0)
+})
+
+test('keeps the player squeeze choice visible through full-motion settlement', async ({
+  page,
+}) => {
+  await stubLeaderboardWrites(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  await expect(page.locator('[data-table-phase]')).toBeVisible()
+  const before = await readStoredGame(page)
+
+  await page.locator('[data-bet-target="player"]').click()
+  await expect(page.locator('.reveal-control')).toHaveAttribute(
+    'data-reveal-control',
+    'player-squeeze',
+  )
+  await page.getByRole('button', { name: /确认下注/ }).click()
+
+  const table = page.locator('[data-table-phase]')
+  const deadline = Date.now() + 35_000
+  while (
+    Date.now() < deadline &&
+    (await table.getAttribute('data-table-phase')) !== 'settling'
+  ) {
+    const card = page.locator('.reveal-card.can-flip:not(:disabled)').first()
+    if (await card.isVisible().catch(() => false)) {
+      await card.focus()
+      await card.press('Enter')
+    } else {
+      await page.waitForTimeout(80)
+    }
+  }
+
+  await expect(table).toHaveAttribute('data-table-phase', 'settling')
+  await expect(page.locator('.reveal-control')).toHaveAttribute(
+    'data-reveal-control',
+    'player-squeeze',
+  )
+  await expect(page.getByRole('radio', { name: '自己咪牌' })).toBeChecked()
+  await expect
+    .poll(() => readStoredGame(page), { timeout: 35_000 })
+    .toMatchObject({ historyLength: before.historyLength + 1 })
+  await expect(table).toHaveAttribute('data-table-phase', 'betting', {
+    timeout: 35_000,
+  })
+})
+
+test('keeps the mobile table horizontally contained, controls reachable, and axe-clean', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 })
@@ -81,7 +195,16 @@ test('keeps the mobile table within the viewport and exposes no serious axe viol
   )
   expect(overflow).toBeLessThanOrEqual(1)
   await expect(page.locator('[data-bet-target="player"]')).toBeVisible()
-  await expect(page.getByRole('button', { name: /确认下注/ })).toBeVisible()
+  for (const control of [
+    page.getByRole('button', { name: /飞牌/ }),
+    page.getByRole('button', { name: /确认下注/ }),
+  ]) {
+    await control.scrollIntoViewIfNeeded()
+    await expect(control).toBeInViewport()
+    const box = await control.boundingBox()
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44)
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44)
+  }
 
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
@@ -98,6 +221,7 @@ test('keeps every betting target in the three-column felt layout @cross-browser'
   for (const width of [320, 390, 1280]) {
     await page.setViewportSize({ width, height: 844 })
     await openFreshTable(page)
+    await page.locator('[data-bet-target="player"]').click()
 
     const layout = await page.locator('.felt-bet-grid').evaluate((grid) => {
       const targets = Array.from(
@@ -140,6 +264,20 @@ test('keeps every betting target in the three-column felt layout @cross-browser'
       expect(target.width).toBeGreaterThanOrEqual(44)
       expect(target.height).toBeGreaterThanOrEqual(44)
       expect(target.centerTarget).toBe(target.name)
+    }
+
+    const revealTargets = await page
+      .locator('.reveal-control-options label')
+      .evaluateAll((labels) =>
+        labels.map((label) => {
+          const rect = label.getBoundingClientRect()
+          return { width: rect.width, height: rect.height }
+        }),
+      )
+    expect(revealTargets).toHaveLength(2)
+    for (const target of revealTargets) {
+      expect(target.width).toBeGreaterThanOrEqual(44)
+      expect(target.height).toBeGreaterThanOrEqual(44)
     }
   }
 })

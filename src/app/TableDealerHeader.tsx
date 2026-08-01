@@ -10,7 +10,7 @@ import {
   revealSideLabel,
 } from './tableUi'
 import { isFlyRound } from '../game/records'
-import type { RevealSide } from '../game/reveal'
+import { resolveRevealControl, type RevealSide } from '../game/reveal'
 import type { PendingRound, RoundRecord } from '../types'
 import { DealerRoadPanel } from '../components/RoadBoard'
 
@@ -97,7 +97,11 @@ export function TableDealerHeader({
         ) : roundPrelude ? (
           <div className="round-net reveal-progress">
             <span>
-              {roundPrelude.playMode === 'fly' ? '飞牌 · 无下注' : '筹码已锁定'}
+              {roundPrelude.playMode === 'fly'
+                ? '飞牌 · 无下注'
+                : resolveRevealControl(roundPrelude.pending) === 'dealer-reveal'
+                  ? '荷官开牌 · 已锁注'
+                  : '自己咪牌 · 已锁注'}
             </span>
             <strong>NO MORE BETS</strong>
           </div>

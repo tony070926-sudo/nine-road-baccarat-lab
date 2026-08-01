@@ -95,6 +95,7 @@ const PENDING_KEYS = [
   'result',
   'revealedCount',
 ] as const
+const OPTIONAL_PENDING_KEYS = ['revealControl'] as const
 
 const SUITS = new Set(['spades', 'hearts', 'diamonds', 'clubs'])
 const RANKS = new Set([
@@ -599,10 +600,13 @@ export function isPersistedPendingRound(
 ): value is PersistedPendingRound {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, PENDING_KEYS) ||
+    !hasOnlyKeys(value, PENDING_KEYS, OPTIONAL_PENDING_KEYS) ||
     value.version !== 1 ||
     !isNonEmptyString(value.id) ||
     (value.playMode !== 'bet' && value.playMode !== 'fly') ||
+    (Object.hasOwn(value, 'revealControl') &&
+      value.revealControl !== 'player-squeeze' &&
+      value.revealControl !== 'dealer-reveal') ||
     !isMoney(value.balanceBefore) ||
     !isNonEmptyString(value.sourceShoeId) ||
     !isSafeIntegerInRange(value.sourceCursor, 0, PHYSICAL_CARD_COUNT) ||
@@ -628,7 +632,8 @@ export function isPersistedPendingRound(
   const bets = value.bets
   if (
     (value.playMode === 'fly' && totalBets(bets) !== 0) ||
-    (value.playMode === 'bet' && totalBets(bets) === 0)
+    (value.playMode === 'bet' && totalBets(bets) === 0) ||
+    (value.playMode === 'fly' && value.revealControl === 'player-squeeze')
   ) {
     return false
   }

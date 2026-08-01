@@ -7,6 +7,7 @@ import type {
   ShoeState,
 } from '../types'
 import { dealRound } from './baccarat'
+import { resolveRevealControl } from './reveal'
 import {
   isPersistedGameState,
   isPersistedPendingRound,
@@ -61,12 +62,13 @@ function shoesMatch(left: ShoeState, right: ShoeState): boolean {
 }
 
 export function pendingRoundsMatch(
-  left: PendingRound,
-  right: PendingRound,
+  left: PendingRound | PersistedPendingRound,
+  right: PendingRound | PersistedPendingRound,
 ): boolean {
   return (
     left.id === right.id &&
     left.playMode === right.playMode &&
+    resolveRevealControl(left) === resolveRevealControl(right) &&
     left.bets.player === right.bets.player &&
     left.bets.banker === right.bets.banker &&
     left.bets.tie === right.bets.tie &&

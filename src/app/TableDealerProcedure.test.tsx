@@ -14,6 +14,7 @@ function pending(result: DealResult): PendingRound {
   return {
     id: 'round-procedure',
     playMode: 'bet',
+    revealControl: 'player-squeeze',
     bets: { player: 100, banker: 0, tie: 0, playerPair: 0, bankerPair: 0 },
     balanceBefore: 10_000,
     sourceShoeId: 'shoe-procedure',

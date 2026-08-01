@@ -58,6 +58,7 @@ function fixture(seed = 20260801, shoeId = 'S-TABLE-V2'): {
     version: 1,
     id: `round-${shoeId}`,
     playMode: 'bet',
+    revealControl: 'player-squeeze',
     bets: { ...EMPTY_BETS, player: 100 },
     balanceBefore: game.balance,
     sourceShoeId: shoe.id,

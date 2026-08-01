@@ -3,13 +3,16 @@ import type {
   PersistedGameState,
   PersistedPendingRound,
   PlayMode,
+  RevealControl,
 } from '../types'
 import { dealRound, totalBets, validateBets } from './baccarat'
+import { resolveRevealControl } from './reveal'
 
 interface PrepareRoundInput {
   game: PersistedGameState
   bets: Bets
   playMode: PlayMode
+  revealControl?: RevealControl
   roundId: string
 }
 
@@ -22,11 +25,26 @@ export function preparePendingRound({
   game,
   bets,
   playMode,
+  revealControl,
   roundId,
 }: PrepareRoundInput): PersistedPendingRound {
   if (!roundId) throw new Error('roundId is required')
   if (game.shoe.needsShuffle) {
     throw new Error('a fresh shoe is required before preparing the round')
+  }
+  if (
+    revealControl !== undefined &&
+    revealControl !== 'player-squeeze' &&
+    revealControl !== 'dealer-reveal'
+  ) {
+    throw new Error('invalid reveal control')
+  }
+  const resolvedRevealControl = resolveRevealControl({
+    playMode,
+    revealControl,
+  })
+  if (playMode === 'fly' && resolvedRevealControl !== 'dealer-reveal') {
+    throw new Error('fly mode requires dealer reveal')
   }
 
   if (playMode === 'bet') {
@@ -41,6 +59,7 @@ export function preparePendingRound({
     version: 1,
     id: roundId,
     playMode,
+    revealControl: resolvedRevealControl,
     bets: { ...bets },
     balanceBefore: game.balance,
     sourceShoeId: game.shoe.id,

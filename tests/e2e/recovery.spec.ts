@@ -1,10 +1,12 @@
 import { expect, test } from '@playwright/test'
 import {
+  collectRuntimeErrors,
   finishRoundWithKeyboard,
   openFreshTable,
   readStoredGame,
   readStoredPending,
   startPlayerRound,
+  stubLeaderboardWrites,
 } from './support/gameFixture'
 
 async function failTableMutation(
@@ -68,6 +70,54 @@ test('reload resumes the same durable round and settles once', async ({ page }) 
   await finishRoundWithKeyboard(page)
   expect((await readStoredGame(page)).historyLength).toBe(1)
   expect(await readStoredPending(page)).toBeNull()
+})
+
+test('reload resumes a dealer-controlled round and settles once', async ({ page }) => {
+  await stubLeaderboardWrites(page)
+  const runtimeErrors = collectRuntimeErrors(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  await expect(page.locator('[data-table-phase]')).toBeVisible()
+  const before = await readStoredGame(page)
+
+  await page.locator('[data-bet-target="player"]').click()
+  await page.getByText('荷官开牌', { exact: true }).click()
+  await page.getByRole('button', { name: /确认下注/ }).click()
+  await expect.poll(() => readStoredPending(page)).not.toBeNull()
+
+  const beforeReload = await readStoredPending(page)
+  expect(beforeReload?.revealControl).toBe('dealer-reveal')
+  await page.reload()
+  await expect(page.locator('[data-table-phase]')).toBeVisible()
+
+  const afterReload = await readStoredPending(page)
+  expect(afterReload?.id).toBe(beforeReload?.id)
+  expect(afterReload?.revealControl).toBe('dealer-reveal')
+  expect(afterReload?.revealedCount).toBeGreaterThanOrEqual(
+    beforeReload?.revealedCount ?? 0,
+  )
+
+  let maximumManualCardCount = 0
+  await expect
+    .poll(
+      async () => {
+        maximumManualCardCount = Math.max(
+          maximumManualCardCount,
+          await page.locator('.reveal-card.can-flip:not(:disabled)').count(),
+        )
+        return (await readStoredGame(page)).historyLength
+      },
+      { timeout: 35_000, intervals: [20, 40, 80] },
+    )
+    .toBe(before.historyLength + 1)
+
+  expect(maximumManualCardCount).toBe(0)
+  expect(await readStoredPending(page)).toBeNull()
+  await expect(page.locator('[data-table-phase]')).toHaveAttribute(
+    'data-table-phase',
+    'betting',
+  )
+  expect(runtimeErrors).toEqual([])
 })
 
 test('a second tab cannot advance the leased table', async ({

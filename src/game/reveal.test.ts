@@ -15,6 +15,7 @@ import {
   manualRevealSides,
   nextRevealCard,
   openingDealCardIds,
+  resolveRevealControl,
   revealOrder,
   revealIsComplete,
   revealSideForCard,
@@ -67,6 +68,7 @@ function pendingFixture(seed = 41): {
     version: 1,
     id: 'round-1',
     playMode: 'bet',
+    revealControl: 'player-squeeze',
     bets: { ...EMPTY_BETS, player: 100 },
     balanceBefore: 10_000,
     sourceShoeId: sourceShoe.id,
@@ -80,6 +82,17 @@ function pendingFixture(seed = 41): {
 }
 
 describe('manual reveal sequencing', () => {
+  it('resolves legacy reveal control without coupling it to play mode', () => {
+    expect(resolveRevealControl({ playMode: 'bet' })).toBe('player-squeeze')
+    expect(resolveRevealControl({ playMode: 'fly' })).toBe('dealer-reveal')
+    expect(
+      resolveRevealControl({
+        playMode: 'bet',
+        revealControl: 'dealer-reveal',
+      }),
+    ).toBe('dealer-reveal')
+  })
+
   it('maps wagers to only the sides the player should manually reveal', () => {
     expect(
       manualRevealSides(
@@ -142,6 +155,22 @@ describe('manual reveal sequencing', () => {
           bankerPair: 0,
         },
         'fly',
+      ),
+    ).toEqual([])
+  })
+
+  it('leaves every wagered hand to the dealer when explicitly selected', () => {
+    expect(
+      manualRevealSides(
+        {
+          player: 100,
+          banker: 0,
+          tie: 0,
+          playerPair: 0,
+          bankerPair: 0,
+        },
+        'bet',
+        'dealer-reveal',
       ),
     ).toEqual([])
   })
@@ -282,6 +311,12 @@ describe('manual reveal sequencing', () => {
       pendingRoundsMatch(pending, {
         ...structuredClone(pending),
         bets: { ...pending.bets, player: 200 },
+      }),
+    ).toBe(false)
+    expect(
+      pendingRoundsMatch(pending, {
+        ...structuredClone(pending),
+        revealControl: 'dealer-reveal',
       }),
     ).toBe(false)
   })

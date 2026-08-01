@@ -74,7 +74,11 @@ export function derivePendingRoundView(
   const completedCards = revealedCards(round.result, revealedCount)
   const completedCardIds = new Set(completedCards.map((card) => card.id))
   const nextCard = nextRevealCard(round.result, revealedCount)
-  const manualSides = manualRevealSides(round.bets, round.playMode)
+  const manualSides = manualRevealSides(
+    round.bets,
+    round.playMode,
+    round.revealControl,
+  )
   const nextSide = nextCard
     ? revealSideForCard(round.result, nextCard.id)
     : null
@@ -140,9 +144,16 @@ export function createRoundId(): string {
 }
 
 export function roundRevealInstruction(round: PendingRound): string {
-  const revealSides = manualRevealSides(round.bets, round.playMode)
+  const revealSides = manualRevealSides(
+    round.bets,
+    round.playMode,
+    round.revealControl,
+  )
   if (round.playMode === 'fly') {
     return '飞牌进行中，本局无下注，荷官将自动开牌并写入路单。'
+  }
+  if (round.revealControl === 'dealer-reveal') {
+    return '下注已锁定。本局已拒绝接牌，双方牌面均由荷官依次开出。'
   }
   if (revealSides.length === 0) {
     return '下注已锁定。本局没有庄/闲主注，双方牌面由荷官依次开出。'

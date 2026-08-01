@@ -2,6 +2,7 @@ import type {
   Bets,
   PersistedGameState,
   PlayMode,
+  RevealControl,
   RoundRecord,
   ShoeState,
 } from '../types'
@@ -48,6 +49,7 @@ export class TableEngineError extends Error {
 interface PrepareRoundStateInput {
   bets: Bets
   playMode: PlayMode
+  revealControl?: RevealControl
   roundId: string
 }
 
@@ -155,6 +157,7 @@ export function prepareRoundState(
     game: state.game,
     bets: input.bets,
     playMode: input.playMode,
+    revealControl: input.revealControl,
     roundId: input.roundId,
   })
 

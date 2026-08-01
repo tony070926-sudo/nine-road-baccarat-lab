@@ -1,4 +1,5 @@
 import { EMPTY_BETS, createShoe } from '../game/baccarat'
+import { resolveRevealControl } from '../game/reveal'
 import { tableVersionOf, type TableVersion } from '../game/tableState'
 import {
   readLegacyTableState,
@@ -36,6 +37,7 @@ export function pendingRoundFromPersisted(
   return {
     id: storedPending.id,
     playMode: storedPending.playMode,
+    revealControl: resolveRevealControl(storedPending),
     bets: storedPending.bets,
     balanceBefore: storedPending.balanceBefore,
     sourceShoeId: storedPending.sourceShoeId,

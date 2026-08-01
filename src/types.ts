@@ -70,10 +70,12 @@ export interface Settlement {
 }
 
 export type PlayMode = 'bet' | 'fly'
+export type RevealControl = 'player-squeeze' | 'dealer-reveal'
 
 export interface PendingRound {
   id: string
   playMode: PlayMode
+  revealControl: RevealControl
   bets: Bets
   balanceBefore: number
   sourceShoeId: string
@@ -82,8 +84,14 @@ export interface PendingRound {
   result: DealResult
 }
 
-export interface PersistedPendingRound extends PendingRound {
+/**
+ * The reveal-control field is optional only while reading legacy v1 journals.
+ * Newly prepared rounds always persist it explicitly, and presentation state
+ * resolves the legacy default before use.
+ */
+export type PersistedPendingRound = Omit<PendingRound, 'revealControl'> & {
   version: 1
+  revealControl?: RevealControl
   revealedCount: number
 }
 
