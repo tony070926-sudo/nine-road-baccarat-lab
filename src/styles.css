@@ -5013,7 +5013,7 @@ footer p {
     "playerPair empty bankerPair"
     "player tie banker";
   grid-template-columns: 1fr 0.72fr 1fr;
-  grid-template-rows: 43px 69px;
+  grid-template-rows: 44px 69px;
   gap: 5px;
 }
 
@@ -5038,7 +5038,6 @@ footer p {
 }
 
 .casino-betting-layer .bet-zone {
-  grid-column: auto;
   min-height: 0;
   padding: 4px 7px;
   overflow: visible;
