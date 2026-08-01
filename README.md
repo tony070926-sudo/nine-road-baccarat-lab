@@ -72,6 +72,9 @@ npm run check
 npm run audit:probability
 ```
 
+模块边界、权威牌桌快照和 Web Lock 安全契约见
+[架构说明](docs/architecture.md)。`npm run check` 会同时检查依赖方向和旧写入链是否重新出现。
+
 概率审计默认运行 1,000,000 局，使用固定测试种子；生产洗牌不接受用户种子。
 
 ## Cloudflare Pages

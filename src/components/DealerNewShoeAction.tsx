@@ -35,15 +35,6 @@ export function DealerNewShoeAction({
       role="status"
       aria-label={`新牌靴亮出 ${burnCard.rank}${suit}，随后再销 ${additionalBurnedCards} 张，共销 ${shoe.burnedCards} 张`}
     >
-      <span className="dealer-new-shoe-shadow" />
-      <span className="dealer-new-shoe-sleeve" />
-      <img
-        className="dealer-new-shoe-hand"
-        src="/assets/card-reveal-hand-v2.webp"
-        alt=""
-        draggable="false"
-        decoding="async"
-      />
       <span className="dealer-new-card-pack">
         <i />
         <i />

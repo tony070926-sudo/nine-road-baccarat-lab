@@ -15,14 +15,16 @@ import {
   manualRevealSides,
   nextRevealCard,
   openingDealCardIds,
-  pendingRoundMatchesGame,
-  pendingRoundsMatch,
   revealOrder,
   revealIsComplete,
   revealSideForCard,
   revealedCards,
   visibleRevealCardIds,
 } from './reveal'
+import {
+  pendingRoundMatchesGame,
+  pendingRoundsMatch,
+} from './roundIntegrity'
 
 function card(id: string): Card {
   return { id, rank: 'A', suit: 'spades', deck: 1 }

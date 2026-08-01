@@ -11,8 +11,8 @@ import {
   cardsRemaining,
   settleBets,
 } from './baccarat'
-import { pendingRoundMatchesGame } from './reveal'
-import { preparePendingRound } from './roundTransaction'
+import { pendingRoundMatchesGame } from './roundIntegrity'
+import { preparePendingRound } from './roundPreparation'
 import {
   isPersistedGameState,
   isPersistedPendingRound,

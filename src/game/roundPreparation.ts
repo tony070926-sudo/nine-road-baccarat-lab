@@ -14,9 +14,9 @@ interface PrepareRoundInput {
 }
 
 /**
- * Creates the immutable, fully dealt journal entry that must be persisted
- * before the UI announces "No more bets". Animations consume this record; they
- * never decide or redraw the outcome.
+ * Creates the immutable, fully dealt pending round that must be persisted
+ * before the UI announces "No more bets". Animations only consume this record;
+ * they never decide or redraw the outcome.
  */
 export function preparePendingRound({
   game,

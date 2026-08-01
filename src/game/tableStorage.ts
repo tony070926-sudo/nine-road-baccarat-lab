@@ -1,4 +1,4 @@
-import { pendingRoundMatchesGame } from './reveal'
+import { pendingRoundMatchesGame } from './roundIntegrity'
 import {
   isPersistedGameState,
   isPersistedPendingRound,

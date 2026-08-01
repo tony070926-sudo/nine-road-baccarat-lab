@@ -17,7 +17,6 @@
     "vitest.config.ts",
     "playwright.config.ts",
     "scripts",
-    "src/**/*.test.ts",
     "tests/e2e/**/*.ts"
   ]
 }

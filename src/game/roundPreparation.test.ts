@@ -5,7 +5,7 @@ import {
   createSeededRandomInt,
   createShoe,
 } from './baccarat'
-import { preparePendingRound } from './roundTransaction'
+import { preparePendingRound } from './roundPreparation'
 
 function game(): PersistedGameState {
   return {

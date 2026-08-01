@@ -22,7 +22,7 @@ async function failTableMutation(
     prototype.setItem = function (key: string, value: string) {
       if (
         key === 'nine-road-baccarat:table:v2' &&
-        value.includes(`\"lastMutation\":\"${blockedMutation}\"`)
+        value.includes(`"lastMutation":"${blockedMutation}"`)
       ) {
         throw new DOMException('Injected durable write failure', 'QuotaExceededError')
       }

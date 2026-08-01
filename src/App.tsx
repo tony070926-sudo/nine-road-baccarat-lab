@@ -2,13 +2,41 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   CircleAlert,
-  ExternalLink,
   History,
   RefreshCw,
   ShieldCheck,
   Volume2,
   VolumeX,
 } from 'lucide-react'
+import {
+  MOTION_ASSET_URLS,
+  NEW_SHOE_MOTION_MS,
+  OUTCOME_MOTION_MS,
+  STARTING_BALANCE,
+} from './app/tableConfig'
+import {
+  loadInitialSession,
+  pendingRoundFromPersisted,
+} from './app/tableSession'
+import type {
+  DetailView,
+  NewShoeMotion,
+  OutcomeMotion,
+  RevealActor,
+  RoundPrelude,
+} from './app/tableTypes'
+import {
+  createRoundId,
+  derivePendingRoundView,
+  formatNumber,
+  outcomeLabel,
+  revealScopeLabel,
+  revealSideLabel,
+  roundRevealInstruction,
+  statPercent,
+  summarizeShoeRecords,
+  tableLeaseUnavailableMessage,
+} from './app/tableUi'
 import { casinoAudio, loadAudioPreference } from './audio/casinoAudio'
 import { BettingPanel } from './components/BettingPanel'
 import {
@@ -19,12 +47,11 @@ import { DealerArmBridge } from './components/DealerArmBridge'
 import { DealerNewShoeAction } from './components/DealerNewShoeAction'
 import { DealerTableAction } from './components/DealerTableAction'
 import { HistoryTable } from './components/HistoryTable'
-import {
-  PlayingCard,
-  RevealPlayingCard,
-  type RevealInputMethod,
-} from './components/PlayingCard'
+import { Modal } from './components/Modal'
+import type { RevealInputMethod } from './components/PlayingCard'
 import { DealerRoadPanel, RoadBoard } from './components/RoadBoard'
+import { RoundHand } from './components/RoundHand'
+import { RulesModal } from './components/RulesModal'
 import { TableGuests } from './components/TableGuests'
 import {
   TableMotionAtmosphere,
@@ -36,7 +63,6 @@ import {
   TABLE_LIMITS,
   cardsRemaining,
   createShoe,
-  handTotal,
   totalBets,
   validateBets,
 } from './game/baccarat'
@@ -50,7 +76,7 @@ import {
 import {
   downloadTextFile,
   historyToCsv,
-} from './game/storage'
+} from './game/historyExport'
 import { isFlyRound } from './game/records'
 import {
   advanceRevealState,
@@ -60,10 +86,6 @@ import {
   settleRoundState,
 } from './game/tableEngine'
 import { TableCoordinator } from './game/tableCoordinator'
-import {
-  readLegacyTableState,
-  readTableEnvelope,
-} from './game/tableStorage'
 import {
   tableVersionOf,
   type PersistedTableEnvelopeV2,
@@ -100,13 +122,15 @@ import {
   manualRevealSides,
   nextRevealCard,
   openingDealCardIds,
-  pendingRoundMatchesGame,
-  pendingRoundsMatch,
   revealIsComplete,
   revealSideForCard,
   revealedCards,
   visibleRevealCardIds,
 } from './game/reveal'
+import {
+  pendingRoundMatchesGame,
+  pendingRoundsMatch,
+} from './game/roundIntegrity'
 import {
   buildTableGuestRevealReactions,
   buildTableGuestSettlementReactions,
@@ -119,479 +143,10 @@ import type {
   Bets,
   PendingRound,
   PersistedGameState,
-  PersistedPendingRound,
   PlayMode,
-  RoundRecord,
   ShoeState,
-  Winner,
 } from './types'
 import './styles.css'
-
-const STARTING_BALANCE = 10_000
-type RevealActor = 'user' | 'dealer'
-type DetailView = 'road' | 'history' | null
-
-interface RoundPrelude {
-  id: string
-  bets: Bets
-  playMode: PlayMode
-  pending: PendingRound
-}
-
-interface NewShoeMotion {
-  id: string
-  mode: 'manual' | 'automatic'
-  shoe: ShoeState
-  roundIntent: RoundPrelude | null
-}
-
-interface OutcomeMotion {
-  id: string
-  winner: Winner
-}
-
-const NEW_SHOE_MOTION_MS = 1_600
-const OUTCOME_MOTION_MS = 1_080
-
-const SOURCES = [
-  {
-    title: '新加坡 GRA · Marina Bay Sands Baccarat Version 8',
-    description: '金沙直接规则来源：赔率、补牌、和局退注与对子定义。',
-    url: 'https://www.gra.gov.sg/docs/default-source/game-rules/mbs/baccarat-games/mbs-baccarat-game-rules---ver-8.pdf',
-  },
-  {
-    title: '澳门博彩监察协调局 · 百家樂法定规章',
-    description: '澳门法定牌值、补牌与 5% 庄佣规则。',
-    url: 'https://www.dicj.gov.mo/web/cn/rules/Bacara.html',
-  },
-  {
-    title: 'Wizard of Odds · 八副牌组合枚举',
-    description: '庄、闲、和精确概率与标准赔率庄家优势基准。',
-    url: 'https://wizardofodds.com/games/baccarat/basics/',
-  },
-  {
-    title: 'Wizard of Odds · Baccarat Score Boards',
-    description: '赌场路单、龙尾、和局与派生路算法参考。',
-    url: 'https://wizardofodds.com/games/baccarat/history/',
-  },
-  {
-    title: '环球博彩 · 百家樂挤牌习俗与桌边术语',
-    description:
-      '“公”、两边、三边、四边与吹牌等现场叫法参考；地区与牌桌之间可能存在差异。',
-    url: 'https://wgm8.com/szh-blast-from-the-past-squeeze-play/',
-  },
-]
-
-function makeInitialState(): PersistedGameState {
-  return {
-    version: 1,
-    balance: STARTING_BALANCE,
-    shoe: createShoe(),
-    history: [],
-    lastBets: { ...EMPTY_BETS },
-    sessionStartedAt: new Date().toISOString(),
-  }
-}
-
-function pendingRoundFromPersisted(
-  storedPending: PersistedPendingRound,
-): PendingRound {
-  return {
-    id: storedPending.id,
-    playMode: storedPending.playMode,
-    bets: storedPending.bets,
-    balanceBefore: storedPending.balanceBefore,
-    sourceShoeId: storedPending.sourceShoeId,
-    sourceCursor: storedPending.sourceCursor,
-    shoeAfter: storedPending.shoeAfter,
-    result: storedPending.result,
-  }
-}
-
-function loadInitialSession(): {
-  game: PersistedGameState
-  pendingRound: PendingRound | null
-  revealedCount: number
-  tableVersion: TableVersion | null
-  storageFault: boolean
-} {
-  const v2 = readTableEnvelope()
-  if (v2.status === 'ok') {
-    return {
-      game: v2.snapshot.game,
-      pendingRound: v2.snapshot.pending
-        ? pendingRoundFromPersisted(v2.snapshot.pending)
-        : null,
-      revealedCount: v2.snapshot.pending?.revealedCount ?? 0,
-      tableVersion: tableVersionOf(v2.snapshot),
-      storageFault: false,
-    }
-  }
-
-  if (v2.status === 'corrupt' || v2.status === 'unavailable') {
-    return {
-      game: makeInitialState(),
-      pendingRound: null,
-      revealedCount: 0,
-      tableVersion: null,
-      storageFault: true,
-    }
-  }
-
-  const legacy = readLegacyTableState()
-  if (legacy.status === 'ok') {
-    return {
-      game: legacy.core.game,
-      pendingRound: legacy.core.pending
-        ? pendingRoundFromPersisted(legacy.core.pending)
-        : null,
-      revealedCount: legacy.core.pending?.revealedCount ?? 0,
-      tableVersion: null,
-      storageFault: false,
-    }
-  }
-
-  return {
-    game: makeInitialState(),
-    pendingRound: null,
-    revealedCount: 0,
-    tableVersion: null,
-    storageFault:
-      legacy.status === 'corrupt' || legacy.status === 'unavailable',
-  }
-}
-
-function formatNumber(value: number, digits = 2): string {
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: value % 1 === 0 ? 0 : digits,
-    maximumFractionDigits: digits,
-  }).format(value)
-}
-
-function tableLeaseUnavailableMessage(action: string): string {
-  return tableLeaseIsSupported()
-    ? `另一标签页正在控制牌桌，暂时无法${action}。`
-    : `此浏览器缺少 Web Locks，无法安全${action}。`
-}
-
-function outcomeLabel(winner: Winner): string {
-  if (winner === 'banker') return '庄家胜'
-  if (winner === 'player') return '闲家胜'
-  return '和局'
-}
-
-function revealSideLabel(side: RevealSide): string {
-  return side === 'player' ? '闲家' : '庄家'
-}
-
-function revealScopeLabel(sides: RevealSide[]): string {
-  if (sides.length === 0) return '荷官开牌'
-  if (sides.length === 1) return `只翻${revealSideLabel(sides[0])}`
-  return '翻开双方'
-}
-
-function statPercent(count: number, total: number): string {
-  return total ? `${((count / total) * 100).toFixed(1)}%` : '—'
-}
-
-function createRoundId(): string {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `round-${Date.now()}`
-}
-
-function roundRevealInstruction(round: PendingRound): string {
-  const revealSides = manualRevealSides(round.bets, round.playMode)
-  if (round.playMode === 'fly') {
-    return '飞牌进行中，本局无下注，荷官将自动开牌并写入路单。'
-  }
-  if (revealSides.length === 0) {
-    return '下注已锁定。本局没有庄/闲主注，双方牌面由荷官依次开出。'
-  }
-  if (revealSides.length === 1) {
-    return `下注已锁定。本局由你翻开${revealSideLabel(
-      revealSides[0],
-    )}，另一方由荷官自动翻开。`
-  }
-  return '下注已锁定。本局下注涉及双方，请按亮起顺序翻牌。'
-}
-
-interface ModalProps {
-  title: string
-  onClose: () => void
-  children: React.ReactNode
-  wide?: boolean
-}
-
-function Modal({ title, onClose, children, wide = false }: ModalProps) {
-  const dialogRef = useRef<HTMLElement>(null)
-  const onCloseRef = useRef(onClose)
-
-  useEffect(() => {
-    onCloseRef.current = onClose
-  }, [onClose])
-
-  useEffect(() => {
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null
-    const backgroundElements = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        '.app-shell > :not(.modal-backdrop):not(.toast)',
-      ),
-    )
-    const priorInert = backgroundElements.map((element) => element.inert)
-    backgroundElements.forEach((element) => {
-      element.inert = true
-    })
-    dialogRef.current?.focus({ preventScroll: true })
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onCloseRef.current()
-        return
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return
-
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => !element.hidden)
-      if (focusable.length === 0) {
-        event.preventDefault()
-        dialogRef.current.focus({ preventScroll: true })
-        return
-      }
-
-      const first = focusable[0]
-      const last = focusable.at(-1) ?? first
-      const activeElement = document.activeElement
-      if (
-        activeElement === dialogRef.current ||
-        !dialogRef.current.contains(activeElement)
-      ) {
-        event.preventDefault()
-        ;(event.shiftKey ? last : first).focus()
-      } else if (event.shiftKey && activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      backgroundElements.forEach((element, index) => {
-        element.inert = priorInert[index]
-      })
-      previouslyFocused?.focus({ preventScroll: true })
-    }
-  }, [])
-
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        ref={dialogRef}
-        className={`modal-card ${wide ? 'modal-wide' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-        tabIndex={-1}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header>
-          <div>
-            <p className="eyebrow">BACCARAT LAB</p>
-            <h2 id="modal-title">{title}</h2>
-          </div>
-          <button className="modal-close" onClick={onClose} aria-label="关闭">
-            ×
-          </button>
-        </header>
-        <div className="modal-content">{children}</div>
-      </section>
-    </div>
-  )
-}
-
-interface RoundHandProps {
-  side: 'player' | 'banker'
-  settledRound: RoundRecord | null
-  pendingRound: PendingRound | null
-  roundReady: boolean
-  visibleCardIds: Set<string>
-  dealtCardIds: Set<string>
-  activeDealMotion: DealMotionToken | null
-  completedCardIds: Set<string>
-  nextCardId: string | null
-  nextCardRequiresUser: boolean
-  flippingCardId: string | null
-  revealActor: RevealActor | null
-  pendingTotal: number | null
-  onFlip: (cardId: string, inputMethod: RevealInputMethod) => void
-  onFlipComplete: (cardId: string) => void
-  onDealComplete: (motion: DealMotionToken) => void
-}
-
-function RoundHand({
-  side,
-  settledRound,
-  pendingRound,
-  roundReady,
-  visibleCardIds,
-  dealtCardIds,
-  activeDealMotion,
-  completedCardIds,
-  nextCardId,
-  nextCardRequiresUser,
-  flippingCardId,
-  revealActor,
-  pendingTotal,
-  onFlip,
-  onFlipComplete,
-  onDealComplete,
-}: RoundHandProps) {
-  const isPlayer = side === 'player'
-  const sideLabel = isPlayer ? '闲' : '庄'
-  const sideEnglish = isPlayer ? 'PLAYER' : 'BANKER'
-  const pendingCards = pendingRound
-    ? isPlayer
-      ? pendingRound.result.playerCards
-      : pendingRound.result.bankerCards
-    : []
-  const settledCards = settledRound
-    ? isPlayer
-      ? settledRound.playerCards
-      : settledRound.bankerCards
-    : []
-  const visiblePendingCards = pendingCards.filter((card) =>
-    visibleCardIds.has(card.id),
-  )
-  const revealedSideCount = pendingCards.filter((card) =>
-    completedCardIds.has(card.id),
-  ).length
-  const thirdCard = pendingCards[2] ?? null
-  const isThirdCardStage = Boolean(
-    thirdCard &&
-      (nextCardId === thirdCard.id || flippingCardId === thirdCard.id),
-  )
-  const settledTotal = settledRound
-    ? isPlayer
-      ? settledRound.playerTotal
-      : settledRound.bankerTotal
-    : null
-  const pair = settledRound
-    ? isPlayer
-      ? settledRound.playerPair
-      : settledRound.bankerPair
-    : false
-
-  return (
-    <div
-      className={`hand hand-${side} ${pendingRound ? 'is-revealing' : ''} ${
-        isThirdCardStage ? 'is-third-card-stage' : ''
-      }`}
-      data-hand-phase={isThirdCardStage ? 'third-card' : 'opening'}
-    >
-      <div className="hand-label">
-        <span>
-          {sideLabel} <small>{sideEnglish}</small>
-        </span>
-        <strong>
-          {pendingRound ? (pendingTotal ?? '—') : (settledTotal ?? '—')}
-          <small> 点</small>
-        </strong>
-      </div>
-
-      <div className={`cards-row ${isThirdCardStage ? 'is-third-card-stage' : ''}`}>
-        {pendingRound ? (
-          visiblePendingCards.map((card, index) => {
-            const isFlipping = flippingCardId === card.id
-            const dealMotion =
-              activeDealMotion?.cardId === card.id
-                ? activeDealMotion
-                : null
-            const isPlaced = dealtCardIds.has(card.id)
-            return (
-              <RevealPlayingCard
-                card={card}
-                index={index}
-                dealIndex={
-                  pendingRound.result.dealOrder.findIndex(
-                    (dealtCard) => dealtCard.id === card.id,
-                  )
-                }
-                side={side}
-                faceUp={completedCardIds.has(card.id) || isFlipping}
-                canFlip={
-                  roundReady &&
-                  isPlaced &&
-                  nextCardId === card.id &&
-                  nextCardRequiresUser &&
-                  !flippingCardId
-                }
-                isFlipping={isFlipping}
-                isAutomatic={isFlipping && revealActor === 'dealer'}
-                isPlaced={isPlaced}
-                dealMotion={dealMotion}
-                willAutoFlip={
-                  roundReady &&
-                  isPlaced &&
-                  nextCardId === card.id &&
-                  !nextCardRequiresUser &&
-                  !flippingCardId
-                }
-                parkedForThirdCard={index < 2 && isThirdCardStage}
-                onFlip={onFlip}
-                onFlipComplete={onFlipComplete}
-                onDealComplete={onDealComplete}
-                key={card.id}
-              />
-            )
-          })
-        ) : settledRound ? (
-          settledCards.map((card, index) => (
-            <PlayingCard card={card} index={index} key={card.id} />
-          ))
-        ) : (
-          <>
-            <div className="card-back card-back-static">
-              <span className="card-back-frame">
-                <span className="card-back-medallion">九</span>
-              </span>
-            </div>
-            <div className="card-back card-back-static">
-              <span className="card-back-frame">
-                <span className="card-back-medallion">九</span>
-              </span>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="hand-tags">
-        {pendingRound ? (
-          <span className="reveal-side-note">
-            {isThirdCardStage
-              ? '增牌单独观看 · 首两张已收拢'
-              : `已翻 ${revealedSideCount} / ${visiblePendingCards.length}`}
-          </span>
-        ) : (
-          <>
-            {settledRound?.natural && <span>自然牌</span>}
-            {pair && <span>{sideLabel}对</span>}
-            {settledCards.length === 3 && <span>补第三张</span>}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
 
 function App() {
   const [initialSession] = useState(loadInitialSession)
@@ -1036,72 +591,25 @@ function App() {
     [game.history, game.shoe.id],
   )
 
-  const stats = useMemo(() => {
-    const count = currentShoeRecords.length
-    const byWinner = (winner: Winner) =>
-      currentShoeRecords.filter((record) => record.winner === winner).length
-    return {
-      count,
-      banker: byWinner('banker'),
-      player: byWinner('player'),
-      tie: byWinner('tie'),
-      naturals: currentShoeRecords.filter((record) => record.natural).length,
-      pairs: currentShoeRecords.filter((record) => record.playerPair || record.bankerPair).length,
-    }
-  }, [currentShoeRecords])
-
-  const visiblePendingCardIds = useMemo(
-    () =>
-      new Set(
-        pendingRound
-          ? visibleRevealCardIds(pendingRound.result, revealedCount)
-          : [],
-      ),
+  const stats = useMemo(
+    () => summarizeShoeRecords(currentShoeRecords),
+    [currentShoeRecords],
+  )
+  const pendingView = useMemo(
+    () => derivePendingRoundView(pendingRound, revealedCount),
     [pendingRound, revealedCount],
   )
-  const completedPendingCardIds = useMemo(
-    () =>
-      new Set(
-        pendingRound
-          ? revealedCards(pendingRound.result, revealedCount).map((card) => card.id)
-          : [],
-      ),
-    [pendingRound, revealedCount],
-  )
-  const pendingNextCard = pendingRound
-    ? nextRevealCard(pendingRound.result, revealedCount)
-    : null
-  const pendingManualSides = useMemo(
-    () =>
-      pendingRound
-        ? manualRevealSides(pendingRound.bets, pendingRound.playMode)
-        : [],
-    [pendingRound],
-  )
-  const pendingNextSide =
-    pendingRound && pendingNextCard
-      ? revealSideForCard(pendingRound.result, pendingNextCard.id)
-      : null
-  const pendingNextRequiresUser =
-    pendingNextSide !== null && pendingManualSides.includes(pendingNextSide)
-  const completedPendingCards = pendingRound
-    ? revealedCards(pendingRound.result, revealedCount)
-    : []
-  const revealedPlayerCards = pendingRound
-    ? completedPendingCards.filter((card) =>
-        pendingRound.result.playerCards.some((playerCard) => playerCard.id === card.id),
-      )
-    : []
-  const revealedBankerCards = pendingRound
-    ? completedPendingCards.filter((card) =>
-        pendingRound.result.bankerCards.some((bankerCard) => bankerCard.id === card.id),
-      )
-    : []
-  const pendingPlayerTotal =
-    revealedPlayerCards.length > 0 ? handTotal(revealedPlayerCards) : null
-  const pendingBankerTotal =
-    revealedBankerCards.length > 0 ? handTotal(revealedBankerCards) : null
-  const revealDisplayTotal = pendingRound ? visiblePendingCardIds.size : 0
+  const {
+    visibleCardIds: visiblePendingCardIds,
+    completedCardIds: completedPendingCardIds,
+    nextCard: pendingNextCard,
+    manualSides: pendingManualSides,
+    nextSide: pendingNextSide,
+    nextRequiresUser: pendingNextRequiresUser,
+    playerTotal: pendingPlayerTotal,
+    bankerTotal: pendingBankerTotal,
+    displayTotal: revealDisplayTotal,
+  } = pendingView
   const guestShoeId = pendingRound
     ? pendingRound.sourceShoeId
     : settlementMotion && settledCurrentRound
@@ -2808,14 +2316,7 @@ function App() {
             >
               <div className="felt-pattern" />
               <div className="motion-asset-preload" aria-hidden="true">
-                {[
-                  '/assets/dealer-hand-grasp-v3.webp',
-                  '/assets/dealer-hand-push-v3.webp',
-                  '/assets/dealer-hand-release-v3.webp',
-                  '/assets/player-hand-quick-open-v3.webp',
-                  '/assets/player-hand-squeeze-left-v3.webp',
-                  '/assets/player-hand-squeeze-right-v3.webp',
-                ].map((src) => (
+                {MOTION_ASSET_URLS.map((src) => (
                   <img key={src} src={src} alt="" decoding="async" />
                 ))}
               </div>
@@ -2856,22 +2357,6 @@ function App() {
                 shoe={newShoeMotion?.shoe ?? null}
                 mode={newShoeMotion?.mode ?? 'manual'}
               />
-              {isLockingBets && (
-                <div
-                  className={`dealer-signal-gesture ${
-                    roundPrelude?.playMode === 'fly' ? 'is-fly' : ''
-                  }`}
-                  aria-hidden="true"
-                >
-                  <span className="dealer-signal-sleeve" />
-                  <img
-                    src="/assets/card-reveal-hand-v2.webp"
-                    alt=""
-                    draggable="false"
-                    decoding="async"
-                  />
-                </div>
-              )}
               <DealerTableAction
                 key={settlementMotion?.id ?? 'dealer-settlement-idle'}
                 motion={settlementMotion}
@@ -3232,108 +2717,7 @@ function App() {
         </div>
       )}
 
-      {rulesOpen && (
-        <Modal title="标准佣金百家乐规则" onClose={() => setRulesOpen(false)} wide>
-          <div className="rules-intro">
-            <span className="simulation-badge">8 副牌 · 416 张 · 传统庄佣</span>
-            <p>
-              本模拟器以新加坡博彩监管局公布的 Marina Bay Sands Baccarat Version 8
-              为数学与结算主规则来源，并固定使用其中允许的八副牌配置；开牌流程采用澳门式
-              “闲家先开”的明确桌面配置。
-            </p>
-          </div>
-
-          <div className="payout-table">
-            <div className="payout-head">
-              <span>注项</span>
-              <span>净赢</span>
-              <span>含本金总返还</span>
-              <span>说明</span>
-            </div>
-            <div>
-              <strong className="text-player">闲 Player</strong>
-              <span>1 : 1</span>
-              <span>2.00×</span>
-              <span>和局退回原注</span>
-            </div>
-            <div>
-              <strong className="text-banker">庄 Banker</strong>
-              <span>0.95 : 1</span>
-              <span>1.95×</span>
-              <span>仅庄赢利扣 5% 佣金；和局退注</span>
-            </div>
-            <div>
-              <strong className="text-tie">和 Tie</strong>
-              <span>8 : 1</span>
-              <span>9.00×</span>
-              <span>双方最终点数相同</span>
-            </div>
-            <div>
-              <strong>闲对 / 庄对</strong>
-              <span>11 : 1</span>
-              <span>12.00×</span>
-              <span>各自首两张牌 rank 相同</span>
-            </div>
-          </div>
-
-          <div className="rules-grid">
-            <article>
-              <h3>牌值与自然牌</h3>
-              <p>A = 1；2–9 按牌面；10、J、Q、K = 0。总点数只取个位。</p>
-              <p>任一方首两张为 8 或 9 即自然牌，双方都不再补牌。</p>
-            </article>
-            <article>
-              <h3>闲家补牌</h3>
-              <p>无自然牌时，闲家 0–5 点必须补一张；6–7 点停牌。</p>
-              <p>若闲家停牌，庄家 0–5 点补牌、6–7 点停牌。</p>
-            </article>
-            <article>
-              <h3>本桌咪牌与限额</h3>
-              <p>
-                先开闲家首两张，再开庄家首两张，随后依次处理闲、庄增牌；增牌单独观看，
-                首两张牌在该阶段收拢。
-              </p>
-              <p>
-                当前唯一坐位玩家只有在下注庄或闲主注时才咪对应一侧；和、对子单注由荷官开牌。
-                主注限额 10–10,000，和/对子限额 10–1,000。
-              </p>
-            </article>
-          </div>
-
-          <div className="draw-table">
-            <h3>闲家补第三张后，庄家补牌矩阵</h3>
-            <div className="draw-table-grid">
-              <span>庄两张点数</span>
-              <span>遇闲第三张为以下点数时补牌</span>
-              <strong>0 / 1 / 2</strong>
-              <span>总是补牌</span>
-              <strong>3</strong>
-              <span>0–7、9（仅遇 8 停牌）</span>
-              <strong>4</strong>
-              <span>2–7</span>
-              <strong>5</strong>
-              <span>4–7</span>
-              <strong>6</strong>
-              <span>6–7</span>
-              <strong>7</strong>
-              <span>总是停牌</span>
-            </div>
-          </div>
-
-          <div className="rules-sources">
-            <h3>公开来源</h3>
-            {SOURCES.map((source) => (
-              <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
-                <span>
-                  <strong>{source.title}</strong>
-                  <small>{source.description}</small>
-                </span>
-                <ExternalLink size={16} />
-              </a>
-            ))}
-          </div>
-        </Modal>
-      )}
+      <RulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
 
       {resetOpen && (
         <Modal title="重置全部本机模拟数据？" onClose={() => setResetOpen(false)}>

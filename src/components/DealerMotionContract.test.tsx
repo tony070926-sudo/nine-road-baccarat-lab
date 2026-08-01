@@ -1,5 +1,3 @@
-/// <reference types="node" />
-
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createRef, type ComponentProps } from 'react'

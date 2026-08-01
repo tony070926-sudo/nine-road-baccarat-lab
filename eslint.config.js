@@ -25,8 +25,8 @@ export default tseslint.config(
   {
     files: [
       'scripts/**/*.ts',
-      '**/*.test.ts',
-      '**/*.spec.ts',
+      '**/*.test.{ts,tsx}',
+      '**/*.spec.{ts,tsx}',
       'playwright.config.ts',
       'vitest.config.ts',
     ],
