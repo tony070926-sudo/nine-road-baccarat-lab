@@ -74,3 +74,78 @@ test('reduced motion completes without infinite decorative animation', async ({ 
   )
   expect(infiniteAnimations).toEqual([])
 })
+
+test('core table text reflows at a 200% equivalent viewport without clipping', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 900 })
+  await openFreshTable(page)
+
+  const metrics = await page.evaluate(() => {
+    const selectors = [
+      '.dealer-spoken-status',
+      '.felt-betting-heading p',
+      '.table-credit strong',
+      '[data-bet-target="player"] .bet-zone-odds',
+      '.table-deal-button',
+      '.casino-betting-layer .chip',
+      '.table-bet-summary',
+    ]
+    return {
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+      fonts: selectors.map((selector) => {
+        const element = document.querySelector<HTMLElement>(selector)
+        return {
+          selector,
+          visible: Boolean(element && element.getClientRects().length > 0),
+          size: element ? Number.parseFloat(getComputedStyle(element).fontSize) : 0,
+        }
+      }),
+      controls: [
+        document.querySelector<HTMLElement>('[data-bet-target="player"]'),
+        document.querySelector<HTMLElement>('.table-deal-button'),
+      ].map((element) => {
+        const rect = element?.getBoundingClientRect()
+        return rect
+          ? { left: rect.left, right: rect.right, width: rect.width }
+          : null
+      }),
+    }
+  })
+
+  expect(metrics.overflow).toBeLessThanOrEqual(1)
+  for (const font of metrics.fonts) {
+    expect(font.visible, `${font.selector} should remain visible`).toBe(true)
+    expect(font.size, `${font.selector} should be at least 12px`).toBeGreaterThanOrEqual(12)
+  }
+  for (const control of metrics.controls) {
+    expect(control).not.toBeNull()
+    expect(control!.left).toBeGreaterThanOrEqual(0)
+    expect(control!.right).toBeLessThanOrEqual(640)
+    expect(control!.width).toBeGreaterThan(0)
+  }
+})
+
+test('mobile hides secondary betting copy while keeping core controls visible', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openFreshTable(page)
+
+  for (const selector of [
+    '.bet-zone-label small',
+    '.bet-zone-meta small',
+    '.chip-rack-label',
+    '.physical-chip-drag-source > span',
+  ]) {
+    const elements = page.locator(selector)
+    const count = await elements.count()
+    for (let index = 0; index < count; index += 1) {
+      await expect(elements.nth(index)).toBeHidden()
+    }
+  }
+
+  await expect(page.locator('[data-bet-target="player"]')).toBeVisible()
+  await expect(page.locator('[data-remove-last-chip="player"]')).toBeAttached()
+  await expect(page.getByRole('button', { name: /确认下注/ })).toBeVisible()
+})

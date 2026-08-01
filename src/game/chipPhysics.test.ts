@@ -12,6 +12,7 @@ import {
   emptyWagerChipLedger,
   findChipDropZone,
   projectChipPoint,
+  removeLastWagerChip,
   resolveChipDrop,
   rebuildWagerChipLedger,
   sampleChipVelocity,
@@ -319,6 +320,39 @@ describe('visual wager denomination ledger', () => {
       100,
     ])
     expect(layout.layers.every((layer) => layer.tier === 'red')).toBe(true)
+  })
+
+  it('removes the real top chip one at a time without rebuilding denominations', () => {
+    const playerLedger = [100, 50, 500, 10].reduce(
+      (ledger, value) => appendWagerChip(ledger, 'player', value),
+      emptyWagerChipLedger(),
+    )
+    const withBankerChip = appendWagerChip(playerLedger, 'bankerPair', 50)
+
+    const firstRemoval = removeLastWagerChip(withBankerChip, 'player')
+    const secondRemoval = removeLastWagerChip(
+      firstRemoval.nextLedger,
+      'player',
+    )
+
+    expect(firstRemoval.removedValue).toBe(10)
+    expect(firstRemoval.nextLedger.player).toEqual([100, 50, 500])
+    expect(secondRemoval.removedValue).toBe(500)
+    expect(secondRemoval.nextLedger.player).toEqual([100, 50])
+    expect(secondRemoval.nextLedger.bankerPair).toEqual([50])
+    expect(withBankerChip.player).toEqual([100, 50, 500, 10])
+  })
+
+  it('returns the original ledger when the target has no chip to remove', () => {
+    const ledger = appendWagerChip(
+      emptyWagerChipLedger(),
+      'banker',
+      100,
+    )
+    const removal = removeLastWagerChip(ledger, 'player')
+
+    expect(removal.removedValue).toBeNull()
+    expect(removal.nextLedger).toBe(ledger)
   })
 
   it('clears and deterministically rebuilds ledgers without mutating inputs', () => {

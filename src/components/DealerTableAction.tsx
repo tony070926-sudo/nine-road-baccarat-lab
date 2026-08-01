@@ -13,12 +13,17 @@ import {
   dealerSettlementSteps,
   type DealerSettlementMotion,
 } from '../game/settlementMotion'
+import {
+  motionDuration,
+  type EffectiveMotionProfile,
+} from '../game/motionProfile'
 import { casinoAudio } from '../audio/casinoAudio'
 import { ChipStackVisual } from './ChipStackVisual'
 
 interface DealerTableActionProps {
   motion: DealerSettlementMotion | null
   stageRef: RefObject<HTMLElement | null>
+  motionProfile?: EffectiveMotionProfile
 }
 
 interface Point {
@@ -48,6 +53,7 @@ function payoutPoint(point: Point, mobile: boolean): Point {
 export function DealerTableAction({
   motion,
   stageRef,
+  motionProfile = 'standard',
 }: DealerTableActionProps) {
   const actionRef = useRef<HTMLDivElement>(null)
   const [hasStarted, setHasStarted] = useState(false)
@@ -73,10 +79,10 @@ export function DealerTableAction({
 
     const timer = window.setTimeout(
       () => setHasStarted(true),
-      DEALER_SETTLEMENT_PRELUDE_MS,
+      Math.max(20, motionDuration(DEALER_SETTLEMENT_PRELUDE_MS, motionProfile)),
     )
     return () => window.clearTimeout(timer)
-  }, [motion])
+  }, [motion, motionProfile])
 
   useEffect(() => {
     if (
@@ -89,10 +95,10 @@ export function DealerTableAction({
 
     const timer = window.setTimeout(
       () => setActiveStepIndex((current) => current + 1),
-      DEALER_SETTLEMENT_STEP_MS,
+      Math.max(20, motionDuration(DEALER_SETTLEMENT_STEP_MS, motionProfile)),
     )
     return () => window.clearTimeout(timer)
-  }, [activeStepIndex, hasStarted, motion, steps.length])
+  }, [activeStepIndex, hasStarted, motion, motionProfile, steps.length])
 
   useEffect(() => {
     if (!motion || !activeStep) return
@@ -111,9 +117,12 @@ export function DealerTableAction({
       `${motion.id}:settlement:${activeStepIndex}:${activeStep.target}:${activeStep.kind}`,
       activeStep.kind,
       side,
-      dealerSettlementContactDelay(activeStep.kind, reducedMotion),
+      motionDuration(
+        dealerSettlementContactDelay(activeStep.kind, reducedMotion),
+        motionProfile,
+      ),
     )
-  }, [activeStep, activeStepIndex, motion])
+  }, [activeStep, activeStepIndex, motion, motionProfile])
 
   useLayoutEffect(() => {
     if (!motion || !activeStep) return

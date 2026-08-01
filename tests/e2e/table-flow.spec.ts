@@ -52,3 +52,47 @@ test('keeps the mobile table within the viewport and exposes no serious axe viol
   )
   expect(blocking).toEqual([])
 })
+
+test('removes the most recently placed chip in each betting zone with the keyboard', async ({
+  page,
+}) => {
+  await openFreshTable(page)
+
+  await page.getByRole('radio', { name: '100', exact: true }).click()
+  const playerZone = page.locator('[data-bet-target="player"]')
+  await playerZone.click()
+  await page.getByRole('radio', { name: '50', exact: true }).click()
+  await playerZone.click()
+
+  const playerStack = page.locator(
+    '[data-chip-stack-anchor="player"] [data-chip-stack-amount]',
+  )
+  await expect(playerStack).toHaveAttribute('data-chip-stack-amount', '150')
+  expect(
+    await playerStack
+      .locator('.chip-stack-disc[data-chip-value]')
+      .evaluateAll((chips) => chips.map((chip) => chip.getAttribute('data-chip-value'))),
+  ).toEqual(['100', '50'])
+  const accessibility = await new AxeBuilder({ page })
+    .include('.bet-grid')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()
+  expect(
+    accessibility.violations.filter((violation) =>
+      ['serious', 'critical'].includes(violation.impact ?? ''),
+    ),
+  ).toEqual([])
+
+  const removeLast = page.locator('[data-remove-last-chip="player"]')
+  await expect(removeLast).toHaveAttribute('data-last-chip-value', '50')
+  await playerZone.focus()
+  await page.keyboard.press('Tab')
+  await expect(removeLast).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(playerStack).toHaveAttribute('data-chip-stack-amount', '100')
+  await expect(removeLast).toHaveAttribute('data-last-chip-value', '100')
+
+  await page.keyboard.press('Enter')
+  await expect(playerStack).toHaveCount(0)
+  await expect(removeLast).toBeDisabled()
+})

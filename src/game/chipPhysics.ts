@@ -154,6 +154,36 @@ export function appendWagerChip(
   }
 }
 
+export interface RemovedWagerChip {
+  nextLedger: WagerChipLedger
+  removedValue: number | null
+}
+
+/**
+ * Removes the actual top chip from one wager stack. This intentionally pops
+ * the session ledger instead of decomposing the aggregate wager, preserving
+ * the exact denomination order in which the player placed their chips.
+ */
+export function removeLastWagerChip(
+  ledger: WagerChipLedger,
+  target: ChipDropTarget,
+): RemovedWagerChip {
+  const chips = ledger[target]
+  const removedValue = chips.at(-1)
+
+  if (removedValue === undefined) {
+    return { nextLedger: ledger, removedValue: null }
+  }
+
+  return {
+    nextLedger: {
+      ...ledger,
+      [target]: chips.slice(0, -1),
+    },
+    removedValue,
+  }
+}
+
 /**
  * Rebuilds a stable visual ledger when denomination history is unavailable,
  * such as repeat-bet and crash recovery. The financial totals remain Bets.

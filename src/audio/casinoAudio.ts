@@ -2,14 +2,105 @@ import type { CrowdCheerTone } from '../game/crowdCheer'
 import type { SettlementActionKind } from '../game/settlementMotion'
 import type { Winner } from '../types'
 import {
+  AUDIO_PRELOAD_SAMPLE_IDS,
+  AUDIO_SAMPLE_MANIFEST,
+  CARD_FAN_SAMPLES,
+  CARD_PLACE_SAMPLES,
+  CARD_SHOVE_SAMPLES,
+  CARD_SLIDE_SAMPLES,
+  CHIP_COLLIDE_SAMPLES,
+  CHIP_HANDLE_SAMPLES,
+  CHIP_LAY_SAMPLES,
+  CHIP_STACK_SAMPLES,
+  sampleForEvent,
+  type AudioSampleId,
+} from './audioAssets'
+import {
   crowdIntensity,
   panForSide,
   type AudioSide,
 } from './spatialAudio'
 
 const SOUND_PREFERENCE_KEY = 'nine-road-baccarat:table-audio'
+const AUDIO_MIX_KEY = 'nine-road-baccarat:audio-mix-v1'
 const AMBIENT_LEVEL = 0.018
+const MASTER_LEVEL = 0.72
 const MAX_EVENT_IDS = 128
+
+export type CasinoAudioMixChannel =
+  | 'master'
+  | 'effects'
+  | 'ambient'
+  | 'voice'
+
+export interface CasinoAudioMix {
+  master: number
+  effects: number
+  ambient: number
+  voice: number
+}
+
+export const DEFAULT_CASINO_AUDIO_MIX: Readonly<CasinoAudioMix> =
+  Object.freeze({
+    master: 1,
+    effects: 1,
+    ambient: 1,
+    voice: 1,
+  })
+
+function normalizeMixLevel(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value))
+    : fallback
+}
+
+function normalizeAudioMix(value: unknown): CasinoAudioMix {
+  const candidate =
+    value && typeof value === 'object'
+      ? (value as Partial<Record<CasinoAudioMixChannel, unknown>>)
+      : {}
+  return {
+    master: normalizeMixLevel(
+      candidate.master,
+      DEFAULT_CASINO_AUDIO_MIX.master,
+    ),
+    effects: normalizeMixLevel(
+      candidate.effects,
+      DEFAULT_CASINO_AUDIO_MIX.effects,
+    ),
+    ambient: normalizeMixLevel(
+      candidate.ambient,
+      DEFAULT_CASINO_AUDIO_MIX.ambient,
+    ),
+    voice: normalizeMixLevel(
+      candidate.voice,
+      DEFAULT_CASINO_AUDIO_MIX.voice,
+    ),
+  }
+}
+
+export function loadAudioMix(): CasinoAudioMix {
+  if (typeof window === 'undefined') {
+    return { ...DEFAULT_CASINO_AUDIO_MIX }
+  }
+  try {
+    const stored = window.localStorage.getItem(AUDIO_MIX_KEY)
+    return stored
+      ? normalizeAudioMix(JSON.parse(stored) as unknown)
+      : { ...DEFAULT_CASINO_AUDIO_MIX }
+  } catch {
+    return { ...DEFAULT_CASINO_AUDIO_MIX }
+  }
+}
+
+function saveAudioMix(mix: CasinoAudioMix) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(AUDIO_MIX_KEY, JSON.stringify(mix))
+  } catch {
+    // Mix changes still apply for this page when storage is unavailable.
+  }
+}
 
 export function loadAudioPreference(): boolean {
   if (typeof window === 'undefined') return false
@@ -34,6 +125,7 @@ interface AudioGraph {
   master: GainNode
   effects: GainNode
   ambient: GainNode
+  voice: GainNode
   compressor: DynamicsCompressorNode
 }
 
@@ -45,6 +137,10 @@ export class CasinoAudioDirector {
   private ambientLfoGain: GainNode | null = null
   private noiseBuffer: AudioBuffer | null = null
   private noiseBufferContext: AudioContext | null = null
+  private sampleBufferContext: AudioContext | null = null
+  private sampleBuffers = new Map<AudioSampleId, AudioBuffer>()
+  private sampleLoads = new Map<AudioSampleId, Promise<AudioBuffer | null>>()
+  private failedSamples = new Set<AudioSampleId>()
   private recentEventIds: string[] = []
   private recentEventSet = new Set<string>()
   private pendingEventIds = new Set<string>()
@@ -53,6 +149,7 @@ export class CasinoAudioDirector {
   private lifecycleEpoch = 0
   private suspendTimer: number | null = null
   private suspendPromise: Promise<void> | null = null
+  private mix = loadAudioMix()
 
   setEnabled(enabled: boolean) {
     if (!enabled) {
@@ -79,6 +176,24 @@ export class CasinoAudioDirector {
 
   isEnabled() {
     return this.enabled
+  }
+
+  getMix(): CasinoAudioMix {
+    return { ...this.mix }
+  }
+
+  setMix(update: Partial<CasinoAudioMix>): CasinoAudioMix {
+    this.mix = normalizeAudioMix({ ...this.mix, ...update })
+    saveAudioMix(this.mix)
+    this.applyMix()
+    return this.getMix()
+  }
+
+  setMixChannel(
+    channel: CasinoAudioMixChannel,
+    level: number,
+  ): CasinoAudioMix {
+    return this.setMix({ [channel]: level })
   }
 
   async unlock(): Promise<boolean> {
@@ -129,7 +244,11 @@ export class CasinoAudioDirector {
       const now = graph.context.currentTime
       graph.master.gain.cancelScheduledValues(now)
       graph.master.gain.setValueAtTime(graph.master.gain.value, now)
-      graph.master.gain.linearRampToValueAtTime(0.72, now + 0.035)
+      graph.master.gain.linearRampToValueAtTime(
+        MASTER_LEVEL * this.mix.master,
+        now + 0.035,
+      )
+      void this.preloadSamples(graph.context)
       this.startAmbient()
       return true
     } catch {
@@ -171,6 +290,18 @@ export class CasinoAudioDirector {
       const now =
         requestedAt + Math.max(0, delayMs) / 1_000
       const pan = panForSide(side)
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          CHIP_LAY_SAMPLES,
+          now,
+          pan,
+          0.19,
+        )
+      ) {
+        return
+      }
       ;[690, 930, 1_270].forEach((frequency, index) => {
         const oscillator = graph.context.createOscillator()
         const gain = graph.context.createGain()
@@ -211,6 +342,18 @@ export class CasinoAudioDirector {
     this.schedule(eventId, (graph) => {
       const context = graph.context
       const now = context.currentTime
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          CARD_SLIDE_SAMPLES,
+          now,
+          panForSide(side),
+          0.2,
+        )
+      ) {
+        return
+      }
       const source = context.createBufferSource()
       const bandpass = context.createBiquadFilter()
       const gain = context.createGain()
@@ -244,6 +387,18 @@ export class CasinoAudioDirector {
       const now =
         requestedAt + Math.max(0, delayMs) / 1_000
       const pan = panForSide(side)
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          CARD_PLACE_SAMPLES,
+          now,
+          pan,
+          0.22,
+        )
+      ) {
+        return
+      }
       this.noiseBurst(graph, now, 0.055, 780, pan, 0.06)
       this.tone(graph, now, 118, 0.065, pan, 0.04)
     })
@@ -256,6 +411,19 @@ export class CasinoAudioDirector {
   ) {
     this.schedule(eventId, (graph) => {
       const now = graph.context.currentTime
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          CARD_FAN_SAMPLES,
+          now,
+          panForSide(side),
+          automatic ? 0.15 : 0.2,
+          automatic ? 1.08 : 0.94,
+        )
+      ) {
+        return
+      }
       this.noiseBurst(
         graph,
         now,
@@ -274,6 +442,19 @@ export class CasinoAudioDirector {
     this.schedule(eventId, (graph) => {
       const now = graph.context.currentTime
       const pan = panForSide(side)
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          CARD_PLACE_SAMPLES,
+          now,
+          pan,
+          0.18,
+          1.08,
+        )
+      ) {
+        return
+      }
       this.noiseBurst(graph, now, 0.045, 2_250, pan, 0.055)
       this.tone(graph, now + 0.018, 760, 0.07, pan, 0.025)
     })
@@ -349,6 +530,25 @@ export class CasinoAudioDirector {
       const firstPan = kind === 'pay' ? 0 : targetPan
       const finalPan = kind === 'collect' ? 0 : targetPan
       const volume = kind === 'push' ? 0.034 : 0.05
+      const samples =
+        kind === 'pay'
+          ? CHIP_HANDLE_SAMPLES
+          : kind === 'collect'
+            ? CHIP_COLLIDE_SAMPLES
+            : CHIP_STACK_SAMPLES
+
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          samples,
+          start,
+          (firstPan + finalPan) / 2,
+          kind === 'push' ? 0.15 : 0.2,
+        )
+      ) {
+        return
+      }
 
       this.noiseBurst(graph, start, 0.038, 2_650, firstPan, volume * 0.72)
       this.tone(
@@ -383,6 +583,18 @@ export class CasinoAudioDirector {
   playNewShoe(eventId: string) {
     this.schedule(eventId, (graph) => {
       const now = graph.context.currentTime
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          ['card-shuffle'],
+          now,
+          0,
+          0.18,
+        )
+      ) {
+        return
+      }
       this.noiseBurst(graph, now, 0.22, 1_300, 0.25, 0.06)
       this.noiseBurst(graph, now + 0.11, 0.18, 1_850, -0.2, 0.045)
     })
@@ -416,7 +628,7 @@ export class CasinoAudioDirector {
       utterance.lang = 'zh-CN'
       utterance.rate = 0.86
       utterance.pitch = 0.72
-      utterance.volume = 0.58
+      utterance.volume = 0.58 * this.mix.voice * this.mix.master
       const chineseVoice = synthesis
         .getVoices()
         .find((voice) => voice.lang.toLowerCase().startsWith('zh'))
@@ -464,6 +676,19 @@ export class CasinoAudioDirector {
     this.schedule(eventId, (graph) => {
       const now = graph.context.currentTime
       const pan = panForSide(side)
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          CARD_SHOVE_SAMPLES,
+          now,
+          pan,
+          committed ? 0.2 : 0.12,
+          committed ? 1 : 0.92,
+        )
+      ) {
+        return
+      }
       this.noiseBurst(
         graph,
         now,
@@ -548,6 +773,7 @@ export class CasinoAudioDirector {
       ;[
         closedGraph.effects,
         closedGraph.ambient,
+        closedGraph.voice,
         closedGraph.compressor,
         closedGraph.master,
       ].forEach((node) => {
@@ -560,6 +786,10 @@ export class CasinoAudioDirector {
       this.graph = null
       this.noiseBuffer = null
       this.noiseBufferContext = null
+      this.sampleBufferContext = null
+      this.sampleBuffers.clear()
+      this.sampleLoads.clear()
+      this.failedSamples.clear()
       this.suspendPromise = null
     }
 
@@ -580,10 +810,12 @@ export class CasinoAudioDirector {
     const master = context.createGain()
     const effects = context.createGain()
     const ambient = context.createGain()
+    const voice = context.createGain()
     const compressor = context.createDynamicsCompressor()
     master.gain.value = 0
-    effects.gain.value = 0.72
-    ambient.gain.value = AMBIENT_LEVEL
+    effects.gain.value = MASTER_LEVEL * this.mix.effects
+    ambient.gain.value = AMBIENT_LEVEL * this.mix.ambient
+    voice.gain.value = MASTER_LEVEL * this.mix.voice
     compressor.threshold.value = -16
     compressor.knee.value = 14
     compressor.ratio.value = 5
@@ -591,9 +823,10 @@ export class CasinoAudioDirector {
     compressor.release.value = 0.18
     effects.connect(compressor)
     ambient.connect(compressor)
+    voice.connect(compressor)
     compressor.connect(master)
     master.connect(context.destination)
-    this.graph = { context, master, effects, ambient, compressor }
+    this.graph = { context, master, effects, ambient, voice, compressor }
     return this.graph
   }
 
@@ -620,6 +853,106 @@ export class CasinoAudioDirector {
     return buffer
   }
 
+  private prepareSampleContext(context: AudioContext) {
+    if (this.sampleBufferContext === context) return
+    this.sampleBufferContext = context
+    this.sampleBuffers.clear()
+    this.sampleLoads.clear()
+    this.failedSamples.clear()
+  }
+
+  private loadSample(
+    context: AudioContext,
+    sampleId: AudioSampleId,
+  ): Promise<AudioBuffer | null> {
+    this.prepareSampleContext(context)
+    const ready = this.sampleBuffers.get(sampleId)
+    if (ready) return Promise.resolve(ready)
+    if (this.failedSamples.has(sampleId) || context.state === 'closed') {
+      return Promise.resolve(null)
+    }
+    const pending = this.sampleLoads.get(sampleId)
+    if (pending) return pending
+
+    const load = (async () => {
+      try {
+        for (const url of AUDIO_SAMPLE_MANIFEST[sampleId].urls) {
+          try {
+            const response = await fetch(url)
+            if (!response.ok) {
+              throw new Error(`Audio sample HTTP ${response.status}`)
+            }
+            const encoded = await response.arrayBuffer()
+            const buffer = await context.decodeAudioData(encoded)
+            if (
+              this.sampleBufferContext !== context ||
+              context.state === 'closed'
+            ) {
+              return null
+            }
+            this.sampleBuffers.set(sampleId, buffer)
+            return buffer
+          } catch {
+            // Try the next declared encoding before using synthesized audio.
+          }
+        }
+        throw new Error('No compatible audio sample encoding')
+      } catch {
+        if (this.sampleBufferContext === context) {
+          this.failedSamples.add(sampleId)
+        }
+        return null
+      } finally {
+        if (this.sampleBufferContext === context) {
+          this.sampleLoads.delete(sampleId)
+        }
+      }
+    })()
+    this.sampleLoads.set(sampleId, load)
+    return load
+  }
+
+  private async preloadSamples(context: AudioContext) {
+    await Promise.all(
+      AUDIO_PRELOAD_SAMPLE_IDS.map((sampleId) =>
+        this.loadSample(context, sampleId),
+      ),
+    )
+  }
+
+  private playSample(
+    graph: AudioGraph,
+    eventId: string,
+    candidates: readonly AudioSampleId[],
+    start: number,
+    pan: number,
+    volume: number,
+    playbackRate = 1,
+  ): boolean {
+    const context = graph.context
+    this.prepareSampleContext(context)
+    const sampleId = sampleForEvent(eventId, candidates)
+    const buffer = this.sampleBuffers.get(sampleId)
+    if (!buffer) {
+      void this.loadSample(context, sampleId)
+      return false
+    }
+
+    try {
+      const source = context.createBufferSource()
+      const gain = context.createGain()
+      source.buffer = buffer
+      source.playbackRate.setValueAtTime(playbackRate, start)
+      gain.gain.setValueAtTime(volume, start)
+      source.connect(gain)
+      this.connectWithPan(graph, gain, pan)
+      source.start(start)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   private startAmbient() {
     const graph = this.graph
     if (!graph || this.ambientSource || graph.context.state !== 'running') return
@@ -630,11 +963,13 @@ export class CasinoAudioDirector {
     const panner = this.createPanner(context, 0)
     const lfo = context.createOscillator()
     const lfoGain = context.createGain()
-    source.buffer = this.ensureNoiseBuffer(context)
+    this.prepareSampleContext(context)
+    const recordedRoom = this.sampleBuffers.get('room-crowd-loop')
+    source.buffer = recordedRoom ?? this.ensureNoiseBuffer(context)
     source.loop = true
     filter.type = 'lowpass'
-    filter.frequency.value = 520
-    filter.Q.value = 0.45
+    filter.frequency.value = recordedRoom ? 3_400 : 520
+    filter.Q.value = recordedRoom ? 0.3 : 0.45
     if (panner) {
       source.connect(filter).connect(panner).connect(graph.ambient)
     } else {
@@ -642,13 +977,30 @@ export class CasinoAudioDirector {
     }
     lfo.type = 'sine'
     lfo.frequency.value = 0.085
-    lfoGain.gain.value = 0.004
+    lfoGain.gain.value = 0.004 * this.mix.ambient
     lfo.connect(lfoGain).connect(graph.ambient.gain)
     source.start()
     lfo.start()
     this.ambientSource = source
     this.ambientLfo = lfo
     this.ambientLfoGain = lfoGain
+
+    if (!recordedRoom) {
+      void this.loadSample(context, 'room-crowd-loop').then((buffer) => {
+        if (
+          !buffer ||
+          this.graph !== graph ||
+          this.ambientSource !== source ||
+          !this.enabled ||
+          !this.pageVisible ||
+          context.state !== 'running'
+        ) {
+          return
+        }
+        this.stopAmbient()
+        this.startAmbient()
+      })
+    }
   }
 
   private stopAmbient() {
@@ -713,12 +1065,50 @@ export class CasinoAudioDirector {
     graph.master.gain.linearRampToValueAtTime(target, now + 0.035)
   }
 
+  private applyMix() {
+    const graph = this.graph
+    if (!graph || graph.context.state === 'closed') return
+
+    const now = graph.context.currentTime
+    graph.effects.gain.cancelScheduledValues(now)
+    graph.effects.gain.setValueAtTime(
+      MASTER_LEVEL * this.mix.effects,
+      now,
+    )
+    graph.ambient.gain.cancelScheduledValues(now)
+    graph.ambient.gain.setValueAtTime(
+      AMBIENT_LEVEL * this.mix.ambient,
+      now,
+    )
+    graph.voice.gain.cancelScheduledValues(now)
+    graph.voice.gain.setValueAtTime(MASTER_LEVEL * this.mix.voice, now)
+    if (this.ambientLfoGain) {
+      this.ambientLfoGain.gain.setValueAtTime(
+        0.004 * this.mix.ambient,
+        now,
+      )
+    }
+
+    this.fadeMaster(
+      this.enabled && this.pageVisible
+        ? MASTER_LEVEL * this.mix.master
+        : 0,
+    )
+  }
+
   private duckAmbient(graph: AudioGraph, duration: number) {
     const now = graph.context.currentTime
+    const ambientLevel = AMBIENT_LEVEL * this.mix.ambient
     graph.ambient.gain.cancelScheduledValues(now)
     graph.ambient.gain.setValueAtTime(graph.ambient.gain.value, now)
-    graph.ambient.gain.linearRampToValueAtTime(0.007, now + 0.025)
-    graph.ambient.gain.linearRampToValueAtTime(AMBIENT_LEVEL, now + duration)
+    graph.ambient.gain.linearRampToValueAtTime(
+      Math.min(0.007, ambientLevel * 0.4),
+      now + 0.025,
+    )
+    graph.ambient.gain.linearRampToValueAtTime(
+      ambientLevel,
+      now + duration,
+    )
   }
 
   private createPanner(

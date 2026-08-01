@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CasinoAudioDirector } from './casinoAudio'
+import {
+  CasinoAudioDirector,
+  DEFAULT_CASINO_AUDIO_MIX,
+  loadAudioMix,
+} from './casinoAudio'
 import { crowdIntensity, panForSide } from './spatialAudio'
 
 class MockSpeechSynthesisUtterance {
@@ -86,6 +90,7 @@ function createWebAudioHarness(currentTime = 10) {
       createAudioNode({
         buffer: null,
         loop: false,
+        playbackRate: createAudioParam(1),
         start: vi.fn((when = 0) => bufferStarts.push(when)),
         stop: vi.fn(),
       }),
@@ -115,18 +120,21 @@ function createWebAudioHarness(currentTime = 10) {
       panners.push(panner)
       return panner
     }),
+    decodeAudioData: vi.fn(async () => ({}) as AudioBuffer),
     resume: vi.fn(async () => undefined),
     suspend: vi.fn(async () => undefined),
   } as unknown as AudioContext
   const master = createAudioNode({ gain: createAudioParam() })
   const effects = createAudioNode({ gain: createAudioParam() })
   const ambient = createAudioNode({ gain: createAudioParam() })
+  const voice = createAudioNode({ gain: createAudioParam() })
   const compressor = createAudioNode({})
   const graph = {
     context,
     master,
     effects,
     ambient,
+    voice,
     compressor,
   }
 
@@ -223,7 +231,181 @@ describe('CasinoAudioDirector dealer calls', () => {
   })
 })
 
+describe('CasinoAudioDirector persistent mix', () => {
+  it('loads a validated four-channel mix and persists bounded updates', () => {
+    const localStorage = {
+      getItem: vi.fn((key: string) =>
+        key === 'nine-road-baccarat:audio-mix-v1'
+          ? JSON.stringify({
+              master: 0.6,
+              effects: 0.45,
+              ambient: 2,
+              voice: 'invalid',
+            })
+          : null,
+      ),
+      setItem: vi.fn(),
+    }
+    vi.stubGlobal('window', { localStorage })
+
+    const director = new CasinoAudioDirector()
+    expect(director.getMix()).toEqual({
+      master: 0.6,
+      effects: 0.45,
+      ambient: 1,
+      voice: 1,
+    })
+
+    expect(director.setMix({ master: -1, voice: 0.35 })).toEqual({
+      master: 0,
+      effects: 0.45,
+      ambient: 1,
+      voice: 0.35,
+    })
+    expect(director.setMixChannel('effects', 4)).toEqual({
+      master: 0,
+      effects: 1,
+      ambient: 1,
+      voice: 0.35,
+    })
+    expect(localStorage.setItem).toHaveBeenLastCalledWith(
+      'nine-road-baccarat:audio-mix-v1',
+      JSON.stringify({
+        master: 0,
+        effects: 1,
+        ambient: 1,
+        voice: 0.35,
+      }),
+    )
+  })
+
+  it('falls back to defaults when persisted data cannot be read', () => {
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: vi.fn(() => '{not-json'),
+        setItem: vi.fn(),
+      },
+    })
+
+    expect(loadAudioMix()).toEqual(DEFAULT_CASINO_AUDIO_MIX)
+  })
+
+  it('applies all Web Audio channel levels without enabling muted audio', () => {
+    const localStorage = {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    }
+    vi.stubGlobal('window', { localStorage })
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(14)
+    const internals = director as unknown as {
+      graph: typeof harness.graph
+    }
+    internals.graph = harness.graph
+
+    director.setMix({
+      master: 0.5,
+      effects: 0.25,
+      ambient: 0.4,
+      voice: 0.3,
+    })
+
+    expect(harness.graph.effects.gain.setValueAtTime).toHaveBeenCalledWith(
+      0.18,
+      14,
+    )
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenCalledWith(
+      0.0072,
+      14,
+    )
+    expect(harness.graph.voice.gain.setValueAtTime).toHaveBeenCalledWith(
+      0.216,
+      14,
+    )
+    expect(
+      harness.graph.master.gain.linearRampToValueAtTime,
+    ).toHaveBeenCalledWith(0, 14.035)
+  })
+})
+
 describe('CasinoAudioDirector motion timing', () => {
+  it('prefers a decoded chip recording over the synthesized fallback', async () => {
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(11)
+    installWebAudioHarness(director, harness.graph)
+    const sample = {} as AudioBuffer
+    const internals = director as unknown as {
+      sampleBufferContext: AudioContext
+      sampleBuffers: Map<string, AudioBuffer>
+    }
+    internals.sampleBufferContext = harness.graph.context
+    internals.sampleBuffers = new Map([
+      ['chip-lay-1', sample],
+      ['chip-lay-2', sample],
+    ])
+
+    director.playChip('round-2:player:chip', 'player', 215)
+    await vi.waitFor(() => expect(harness.bufferStarts).toHaveLength(1))
+
+    expect(harness.bufferStarts[0]).toBeCloseTo(11.215)
+    expect(harness.oscillatorStarts).toHaveLength(0)
+    expect(harness.panners.at(-1)?.pan.value).toBeLessThan(0)
+  })
+
+  it('uses the synth fallback when one recording cannot be loaded', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(18)
+    installWebAudioHarness(director, harness.graph)
+
+    director.playCardLand('round-2:p1:missing-sample', 'player', 0)
+    await vi.waitFor(() => expect(harness.bufferStarts).toHaveLength(1))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    expect(harness.oscillatorStarts).toHaveLength(1)
+    expect(harness.bufferStarts[0]).toBe(18)
+  })
+
+  it('falls through from WAV to Ogg when one encoding cannot decode', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 415 })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        arrayBuffer: vi.fn(async () => new ArrayBuffer(8)),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(22)
+    const internals = director as unknown as {
+      loadSample(
+        context: AudioContext,
+        sampleId: 'chip-lay-1',
+      ): Promise<AudioBuffer | null>
+    }
+
+    await expect(
+      internals.loadSample(harness.graph.context, 'chip-lay-1'),
+    ).resolves.not.toBeNull()
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/assets/audio/chip-lay-1.wav',
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/assets/audio/chip-lay-1.ogg',
+    )
+    expect(
+      harness.graph.context.decodeAudioData,
+    ).toHaveBeenCalledTimes(1)
+  })
+
   it('schedules card contact at the requested visual offset and deduplicates it', async () => {
     const director = new CasinoAudioDirector()
     const harness = createWebAudioHarness(12)

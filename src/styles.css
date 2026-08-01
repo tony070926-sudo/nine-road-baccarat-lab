@@ -3755,7 +3755,7 @@ footer p {
 
 .casino-table-hud > div > span {
   color: #7f918b;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -3787,7 +3787,7 @@ footer p {
 
 .mini-road-screen small {
   color: #657770;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .mini-result {
@@ -3796,7 +3796,7 @@ footer p {
   height: 22px;
   flex: 0 0 auto;
   place-items: center;
-  font-size: 8px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 800;
   background: rgba(4, 14, 12, 0.78);
@@ -3828,7 +3828,7 @@ footer p {
   gap: 8px;
   align-items: center;
   color: #9fb0aa;
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.11em;
   white-space: nowrap;
@@ -4930,7 +4930,7 @@ footer p {
   margin: 3px auto 7px;
   padding: 4px 12px;
   color: #dce7e3;
-  font-size: 10px;
+  font-size: 12px;
   background: rgba(3, 17, 13, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 999px;
@@ -4975,7 +4975,7 @@ footer p {
 .felt-betting-heading p {
   margin: 0;
   color: #ddd4b8;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.1em;
 }
@@ -4996,7 +4996,7 @@ footer p {
 
 .table-credit span {
   color: #859b91;
-  font-size: 8px;
+  font-size: 12px;
   letter-spacing: 0.07em;
 }
 
@@ -5097,12 +5097,12 @@ footer p {
   display: inline;
   margin-left: 5px;
   color: rgba(214, 224, 220, 0.62);
-  font-size: 7px;
+  font-size: 12px;
 }
 
 .casino-betting-layer .bet-zone-odds {
   color: rgba(225, 231, 228, 0.58);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .casino-betting-layer .bet-zone-meta {
@@ -5115,9 +5115,49 @@ footer p {
 
 .casino-betting-layer .bet-zone-meta small {
   color: rgba(225, 231, 228, 0.46);
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 620;
   letter-spacing: 0.02em;
+}
+
+.bet-zone-undo {
+  z-index: 5;
+  display: inline-flex;
+  min-width: 40px;
+  min-height: 28px;
+  gap: 3px;
+  place-self: start start;
+  align-items: center;
+  justify-content: center;
+  margin: 4px;
+  padding: 3px 5px;
+  color: #f5df9c;
+  font-size: 12px;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  background: rgba(5, 28, 20, 0.94);
+  border: 1px solid rgba(245, 223, 156, 0.64);
+  border-radius: 999px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  opacity: 1;
+  transition:
+    opacity 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease;
+}
+
+.bet-zone-undo:hover:not(:disabled),
+.bet-zone-undo:focus-visible {
+  color: #fff2c3;
+  background: #123f31;
+  border-color: #fff0b3;
+}
+
+.bet-zone-undo:disabled {
+  pointer-events: none;
+  opacity: 0;
 }
 
 .chip-stack-visual {
@@ -5329,7 +5369,7 @@ footer p {
   align-items: center;
   justify-content: center;
   padding: 7px 10px;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -5355,7 +5395,7 @@ footer p {
   display: block;
   margin-bottom: 2px;
   color: #82796b;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.12em;
   text-align: center;
@@ -5369,7 +5409,7 @@ footer p {
 .casino-betting-layer .chip {
   width: 40px;
   height: 40px;
-  font-size: 8px;
+  font-size: 12px;
   box-shadow:
     inset 0 0 0 3px rgba(8, 18, 15, 0.27),
     0 5px 10px rgba(0, 0, 0, 0.28);
@@ -5472,7 +5512,7 @@ footer p {
 .physical-chip-drag-source {
   position: relative;
   display: grid;
-  min-width: 58px;
+  min-width: 70px;
   min-height: 57px;
   place-items: end center;
   padding: 1px 2px 0;
@@ -5486,7 +5526,7 @@ footer p {
   top: -1px;
   left: 50%;
   width: max-content;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 1;
@@ -5824,7 +5864,7 @@ footer p {
   margin-top: 5px;
   padding: 0 6px;
   color: #96a59f;
-  font-size: 8px;
+  font-size: 12px;
   background: transparent;
   border: 0;
 }
@@ -5836,7 +5876,7 @@ footer p {
 
 .casino-betting-layer .table-bet-summary small {
   color: #697a73;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .casino-betting-layer .table-form-error {
@@ -5844,7 +5884,7 @@ footer p {
   margin: 1px 0 0;
   padding: 5px 8px;
   color: #ffb0ae;
-  font-size: 9px;
+  font-size: 12px;
   text-align: center;
   background: rgba(138, 29, 32, 0.22);
   border: 1px solid rgba(255, 110, 110, 0.28);
@@ -6108,7 +6148,7 @@ footer p {
   }
 
   .casino-table-hud > div > span {
-    font-size: 7px;
+    font-size: 12px;
   }
 
   .casino-table-hud > div > strong {
@@ -6133,7 +6173,7 @@ footer p {
   .mini-result {
     width: 19px;
     height: 19px;
-    font-size: 7px;
+    font-size: 12px;
     border-width: 1px;
   }
 
@@ -6405,7 +6445,7 @@ footer p {
     min-height: 30px;
     margin: 1px auto 6px;
     padding: 5px 9px;
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .casino-betting-layer {
@@ -6420,8 +6460,17 @@ footer p {
 
   .felt-betting-heading p {
     max-width: 210px;
-    font-size: 8px;
+    font-size: 12px;
     line-height: 1.3;
+  }
+
+  .betting-call-secondary,
+  .casino-betting-layer .bet-zone-meta small,
+  .chip-rack-label,
+  .physical-chip-drag-source > span,
+  .casino-betting-layer .table-bet-summary small,
+  .casino-rail-note {
+    display: none;
   }
 
   .table-credit span {
@@ -6517,7 +6566,7 @@ footer p {
   .table-deal-button {
     min-height: 44px;
     padding: 6px 7px;
-    font-size: 8px;
+    font-size: 12px;
   }
 
   .table-tool-button {
@@ -6662,7 +6711,7 @@ footer p {
 
   .table-detail-actions {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .table-detail-actions button {
@@ -6897,7 +6946,9 @@ footer p {
 }
 
 .table-audio-toggle,
-.table-new-shoe-toggle {
+.table-new-shoe-toggle,
+.table-settings-toggle,
+.table-reset-toggle {
   display: inline-flex;
   min-width: 44px;
   min-height: 44px;
@@ -6920,12 +6971,17 @@ footer p {
 .table-audio-toggle:focus-visible,
 .table-audio-toggle.is-enabled,
 .table-new-shoe-toggle:hover:not(:disabled),
-.table-new-shoe-toggle:focus-visible {
+.table-new-shoe-toggle:focus-visible,
+.table-settings-toggle:hover,
+.table-settings-toggle:focus-visible,
+.table-reset-toggle:hover:not(:disabled),
+.table-reset-toggle:focus-visible {
   color: #f1dda0;
   border-color: rgba(239, 215, 143, 0.46);
 }
 
-.table-new-shoe-toggle:disabled {
+.table-new-shoe-toggle:disabled,
+.table-reset-toggle:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
@@ -7081,11 +7137,15 @@ footer p {
 
   .table-audio-toggle span,
   .table-audio-toggle strong,
-  .table-new-shoe-toggle span {
+  .table-new-shoe-toggle span,
+  .table-settings-toggle span,
+  .table-reset-toggle span {
     display: none;
   }
 
-  .table-new-shoe-toggle {
+  .table-new-shoe-toggle,
+  .table-settings-toggle,
+  .table-reset-toggle {
     width: 44px;
     min-width: 44px;
     min-height: 44px;
@@ -7625,5 +7685,554 @@ footer p {
   .dealer-new-shoe-action,
   .dealer-table-action {
     display: none !important;
+  }
+}
+
+/* Educational trace, independent probability lab, and local experience mix. */
+.round-rule-trace,
+.probability-lab {
+  width: min(1180px, calc(100% - 28px));
+  margin: 14px auto 0;
+  padding: 16px;
+  color: #dce7e3;
+  font-size: 12px;
+  background:
+    linear-gradient(145deg, rgba(15, 42, 34, 0.96), rgba(6, 22, 17, 0.96));
+  border: 1px solid rgba(231, 208, 144, 0.18);
+  border-radius: 12px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+}
+
+.round-rule-trace > header,
+.probability-lab > header,
+.audio-mix-controls > header {
+  display: flex;
+  gap: 8px 18px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.round-rule-trace > header strong,
+.probability-lab > header strong,
+.audio-mix-controls > header strong {
+  color: #f2dfa2;
+  font-size: 15px;
+}
+
+.round-rule-trace > header small,
+.probability-lab > header small,
+.audio-mix-controls > header small {
+  color: #91a59d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.round-rule-trace ol {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  counter-reset: rule-step;
+}
+
+.round-rule-trace li {
+  position: relative;
+  display: grid;
+  min-height: 70px;
+  gap: 5px;
+  align-content: start;
+  padding: 10px 10px 10px 38px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  counter-increment: rule-step;
+}
+
+.round-rule-trace li::before {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: #12231e;
+  font-weight: 850;
+  content: counter(rule-step);
+  background: #d8c27e;
+  border-radius: 50%;
+}
+
+.round-rule-trace li[data-rule-decision="waiting"]::before {
+  color: #c7d3ce;
+  background: #344a42;
+}
+
+.round-rule-trace li > strong {
+  color: #e9efec;
+  font-size: 12px;
+}
+
+.round-rule-trace li > span {
+  color: #9eb0a9;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.probability-lab {
+  margin-bottom: 20px;
+}
+
+.probability-lab > [role="group"],
+.probability-lab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.probability-lab button {
+  min-height: 42px;
+  padding: 8px 13px;
+  color: #dce7e3;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.probability-lab button:hover:not(:disabled),
+.probability-lab button:focus-visible,
+.probability-lab button[aria-pressed="true"] {
+  color: #fff2bf;
+  background: rgba(216, 194, 126, 0.13);
+  border-color: rgba(242, 223, 162, 0.48);
+}
+
+.probability-lab button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.probability-lab > p {
+  min-height: 20px;
+  margin: 8px 0;
+  color: #a9bab3;
+  font-size: 12px;
+}
+
+.probability-lab-report {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.probability-lab-report table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.probability-lab-report th,
+.probability-lab-report td {
+  padding: 9px 10px;
+  text-align: right;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.probability-lab-report th:first-child,
+.probability-lab-report td:first-child {
+  text-align: left;
+}
+
+.probability-lab-report thead th {
+  color: #f0d993;
+  font-weight: 780;
+}
+
+.probability-lab-report tbody th,
+.probability-lab-report td {
+  color: #c2d0cb;
+}
+
+.probability-lab-report p,
+.probability-lab-report li,
+.probability-lab-report small {
+  color: #9eb0a9;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.audio-mix-controls {
+  display: grid;
+  gap: 12px;
+  color: #dce7e3;
+  font-size: 12px;
+}
+
+.audio-mix-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.audio-mix-grid > label {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.2fr);
+  gap: 14px;
+  align-items: center;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+}
+
+.audio-mix-grid > label > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.audio-mix-grid strong,
+.audio-mix-grid small,
+.audio-mix-slider output,
+.experience-settings-note {
+  font-size: 12px;
+}
+
+.audio-mix-grid small {
+  color: #91a59d;
+  line-height: 1.45;
+}
+
+.audio-mix-slider {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 42px;
+  gap: 10px;
+  align-items: center;
+}
+
+.audio-mix-slider input {
+  width: 100%;
+  min-height: 32px;
+  accent-color: #d8c27e;
+}
+
+.audio-mix-slider output {
+  color: #f0d993;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.experience-settings-note {
+  margin: 12px 0 0;
+  color: #f1cf83;
+  line-height: 1.55;
+}
+
+@media (max-width: 760px) {
+  .round-rule-trace,
+  .probability-lab {
+    width: calc(100% - 14px);
+    padding: 12px;
+  }
+
+  .round-rule-trace > header,
+  .probability-lab > header,
+  .audio-mix-controls > header {
+    display: grid;
+  }
+
+  .round-rule-trace ol,
+  .audio-mix-grid > label {
+    grid-template-columns: 1fr;
+  }
+
+  .audio-mix-slider {
+    grid-template-columns: minmax(0, 1fr) 42px;
+  }
+}
+
+.experience-settings {
+  display: grid;
+  gap: 16px;
+  color: #dce7e3;
+  font-size: 12px;
+}
+
+.experience-settings > header {
+  display: flex;
+  gap: 8px 18px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.experience-settings > header strong,
+.experience-settings legend {
+  color: #f2dfa2;
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.experience-settings > header small,
+.experience-settings fieldset > p,
+.reduced-motion-status {
+  color: #91a59d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.experience-settings fieldset {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.experience-settings fieldset > p {
+  margin: 5px 0 10px;
+}
+
+.motion-profile-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.motion-profile-options label {
+  position: relative;
+  display: grid;
+  min-height: 92px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 11px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.motion-profile-options label:has(input:checked) {
+  background: rgba(216, 194, 126, 0.13);
+  border-color: rgba(242, 223, 162, 0.5);
+}
+
+.motion-profile-options input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: #d8c27e;
+}
+
+.motion-profile-options label > span {
+  display: grid;
+  gap: 5px;
+}
+
+.motion-profile-options strong,
+.motion-profile-options small {
+  font-size: 12px;
+}
+
+.motion-profile-options strong {
+  color: #eef3f0;
+}
+
+.motion-profile-options small {
+  color: #91a59d;
+  line-height: 1.45;
+}
+
+.experience-settings fieldset:disabled {
+  opacity: 0.55;
+}
+
+.experience-settings-extra {
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.reduced-motion-status {
+  margin: 0;
+  padding: 9px 11px;
+  color: #f1cf83;
+  background: rgba(216, 194, 126, 0.08);
+  border: 1px solid rgba(216, 194, 126, 0.2);
+  border-radius: 8px;
+}
+
+/* Pace profiles only affect presentation; durable table transitions remain unchanged. */
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-being-dealt {
+  --deal-motion-duration: 1144ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .dealer-arm-bridge-deal {
+  --dealer-rig-duration: 1144ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .dealer-arm-bridge-reveal {
+  --dealer-rig-duration: 936ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping,
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping .reveal-card-inner {
+  animation-duration: 1404ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping,
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping .reveal-card-inner,
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-flipping::after {
+  animation-duration: 936ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .dealer-new-shoe-action *,
+.app-shell[data-motion-profile="cinematic"] .table-motion-atmosphere[data-motion-phase="new-shoe"] .table-phase-glow {
+  animation-duration: 2080ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .dealer-settle-target-ring,
+.app-shell[data-motion-profile="cinematic"] .dealer-settle-stack-impact,
+.app-shell[data-motion-profile="cinematic"] .dealer-settle-push-impact,
+.app-shell[data-motion-profile="cinematic"] .dealer-commission-chip,
+.app-shell[data-motion-profile="cinematic"] .dealer-table-action-pay .dealer-settle-chip-stack,
+.app-shell[data-motion-profile="cinematic"] .dealer-table-action-collect .dealer-settle-chip-stack,
+.app-shell[data-motion-profile="cinematic"] .dealer-table-action-push .dealer-settle-chip-stack {
+  animation-duration: 1066ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .table-outcome-aura {
+  animation-duration: 1404ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .table-outcome-aura i {
+  animation-duration: 1170ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .table-motion-atmosphere[data-motion-phase="no-more-bets"] .table-phase-glow,
+.app-shell[data-motion-profile="cinematic"] .table-motion-atmosphere[data-motion-phase="no-more-bets"] .table-phase-sweep {
+  animation-duration: 936ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .reveal-card.is-being-dealt {
+  --deal-motion-duration: 484ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .dealer-arm-bridge-deal {
+  --dealer-rig-duration: 484ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .dealer-arm-bridge-reveal {
+  --dealer-rig-duration: 396ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping,
+.app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping .reveal-card-inner {
+  animation-duration: 594ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping.is-drag-commit,
+.app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping.is-drag-commit .reveal-card-inner {
+  animation-duration: 237ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .reveal-card.is-auto-flipping,
+.app-shell[data-motion-profile="fast"] .reveal-card.is-auto-flipping .reveal-card-inner,
+.app-shell[data-motion-profile="fast"] .reveal-card.is-flipping::after {
+  animation-duration: 396ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .dealer-new-shoe-action *,
+.app-shell[data-motion-profile="fast"] .table-motion-atmosphere[data-motion-phase="new-shoe"] .table-phase-glow {
+  animation-duration: 880ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .dealer-settle-target-ring,
+.app-shell[data-motion-profile="fast"] .dealer-settle-stack-impact,
+.app-shell[data-motion-profile="fast"] .dealer-settle-push-impact,
+.app-shell[data-motion-profile="fast"] .dealer-commission-chip,
+.app-shell[data-motion-profile="fast"] .dealer-table-action-pay .dealer-settle-chip-stack,
+.app-shell[data-motion-profile="fast"] .dealer-table-action-collect .dealer-settle-chip-stack,
+.app-shell[data-motion-profile="fast"] .dealer-table-action-push .dealer-settle-chip-stack {
+  animation-duration: 451ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .table-outcome-aura {
+  animation-duration: 594ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .table-outcome-aura i {
+  animation-duration: 495ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .table-motion-atmosphere[data-motion-phase="no-more-bets"] .table-phase-glow,
+.app-shell[data-motion-profile="fast"] .table-motion-atmosphere[data-motion-phase="no-more-bets"] .table-phase-sweep {
+  animation-duration: 396ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .dealer-idle-breath,
+.app-shell[data-motion-profile="fast"] .crowd-cheer-bubble,
+.app-shell[data-motion-profile="fast"] .table-motion-atmosphere[data-motion-phase="dealing"] .table-phase-glow {
+  animation: none !important;
+}
+
+@media (max-width: 760px) {
+  .experience-settings > header {
+    display: grid;
+  }
+
+  .motion-profile-options {
+    grid-template-columns: 1fr;
+  }
+
+  .motion-profile-options label {
+    min-height: 70px;
+  }
+
+  .app-shell[data-motion-profile="cinematic"] .reveal-card.is-being-dealt,
+  .app-shell[data-motion-profile="cinematic"] .dealer-arm-bridge-deal {
+    --deal-motion-duration: 988ms !important;
+    --dealer-rig-duration: 988ms !important;
+  }
+
+  .app-shell[data-motion-profile="cinematic"] .dealer-arm-bridge-reveal {
+    --dealer-rig-duration: 845ms !important;
+  }
+
+  .app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping,
+  .app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping .reveal-card-inner {
+    animation-duration: 1170ms !important;
+  }
+
+  .app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping,
+  .app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping .reveal-card-inner,
+  .app-shell[data-motion-profile="cinematic"] .reveal-card.is-flipping::after {
+    animation-duration: 845ms !important;
+  }
+
+  .app-shell[data-motion-profile="fast"] .reveal-card.is-being-dealt,
+  .app-shell[data-motion-profile="fast"] .dealer-arm-bridge-deal {
+    --deal-motion-duration: 418ms !important;
+    --dealer-rig-duration: 418ms !important;
+  }
+
+  .app-shell[data-motion-profile="fast"] .dealer-arm-bridge-reveal {
+    --dealer-rig-duration: 358ms !important;
+  }
+
+  .app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping,
+  .app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping .reveal-card-inner {
+    animation-duration: 495ms !important;
+  }
+
+  .app-shell[data-motion-profile="fast"] .reveal-card.is-auto-flipping,
+  .app-shell[data-motion-profile="fast"] .reveal-card.is-auto-flipping .reveal-card-inner,
+  .app-shell[data-motion-profile="fast"] .reveal-card.is-flipping::after {
+    animation-duration: 358ms !important;
   }
 }

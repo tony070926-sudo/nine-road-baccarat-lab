@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   CircleAlert,
+  FlaskConical,
   History,
   RefreshCw,
+  RotateCcw,
+  Settings2,
   ShieldCheck,
   Volume2,
   VolumeX,
@@ -37,7 +40,12 @@ import {
   summarizeShoeRecords,
   tableLeaseUnavailableMessage,
 } from './app/tableUi'
-import { casinoAudio, loadAudioPreference } from './audio/casinoAudio'
+import { useMotionProfilePreference } from './app/useMotionProfilePreference'
+import {
+  casinoAudio,
+  loadAudioPreference,
+  type CasinoAudioMixChannel,
+} from './audio/casinoAudio'
 import { BettingPanel } from './components/BettingPanel'
 import {
   CrowdCheerOverlay,
@@ -46,13 +54,16 @@ import {
 import { DealerArmBridge } from './components/DealerArmBridge'
 import { DealerNewShoeAction } from './components/DealerNewShoeAction'
 import { DealerTableAction } from './components/DealerTableAction'
+import { ExperienceSettingsModal } from './components/ExperienceSettingsModal'
 import { HistoryTable } from './components/HistoryTable'
-import { Modal } from './components/Modal'
 import type { RevealInputMethod } from './components/PlayingCard'
+import { ProbabilityLab } from './components/ProbabilityLab'
 import { DealerRoadPanel, RoadBoard } from './components/RoadBoard'
 import { RoundHand } from './components/RoundHand'
+import { RoundRuleTrace } from './components/RoundRuleTrace'
 import { RulesModal } from './components/RulesModal'
 import { TableGuests } from './components/TableGuests'
+import { TableMaintenanceModals } from './components/TableMaintenanceModals'
 import {
   TableMotionAtmosphere,
   type TableMotionPhase,
@@ -99,10 +110,12 @@ import {
   newlyVisibleUndealtCardIds,
   type DealMotionToken,
 } from './game/motion'
+import type { MotionProfile } from './game/motionProfile'
 import {
   CHIP_STACK_IMPACT_MS,
   appendWagerChip,
   clearWagerChipLedger,
+  removeLastWagerChip,
   rebuildWagerChipLedger,
   type WagerChipLedger,
 } from './game/chipPhysics'
@@ -122,6 +135,7 @@ import {
   manualRevealSides,
   nextRevealCard,
   openingDealCardIds,
+  revealOrder,
   revealIsComplete,
   revealSideForCard,
   revealedCards,
@@ -168,6 +182,13 @@ function App() {
     useState<WagerChipLedger | null>(null)
   const [selectedChip, setSelectedChip] = useState(100)
   const [audioEnabled, setAudioEnabled] = useState(loadAudioPreference)
+  const [audioMix, setAudioMix] = useState(() => casinoAudio.getMix())
+  const {
+    motionProfile,
+    effectiveMotionProfile,
+    scaledMotionDuration,
+    updateMotionProfile,
+  } = useMotionProfilePreference()
   const [pendingRound, setPendingRound] = useState<PendingRound | null>(
     initialSession.pendingRound,
   )
@@ -200,6 +221,7 @@ function App() {
   const [rulesOpen, setRulesOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [newShoeOpen, setNewShoeOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [roadFullscreen, setRoadFullscreen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [activeCrowdCheer, setActiveCrowdCheer] =
@@ -586,6 +608,12 @@ function App() {
             : 'dealing'
           : 'betting'
   const tableMotionOutcome = outcomeMotion?.winner ?? null
+  const ruleTraceResult = pendingRound?.result ?? settledCurrentRound
+  const ruleTraceRevealedCount = pendingRound
+    ? revealedCount
+    : ruleTraceResult
+      ? revealOrder(ruleTraceResult).length
+      : 0
   const currentShoeRecords = useMemo(
     () => game.history.filter((record) => record.shoeId === game.shoe.id),
     [game.history, game.shoe.id],
@@ -681,6 +709,24 @@ function App() {
     }
   }
 
+  const handleAudioMixChange = (
+    channel: CasinoAudioMixChannel,
+    level: number,
+  ) => {
+    setAudioMix(casinoAudio.setMixChannel(channel, level))
+  }
+
+  const handleMotionProfileChange = (profile: MotionProfile) => {
+    if (!updateMotionProfile(profile)) {
+      setNotice('当前浏览器无法保存节奏偏好；本页仍会立即采用新设置。')
+    }
+  }
+
+  const openSettingsModal = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.focus({ preventScroll: true })
+    setSettingsOpen(true)
+  }
+
   const openRulesModal = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.currentTarget.focus({ preventScroll: true })
     setRulesOpen(true)
@@ -724,7 +770,7 @@ function App() {
     crowdCheerTimerRef.current = window.setTimeout(() => {
       crowdCheerTimerRef.current = null
       setActiveCrowdCheer((current) => (current?.id === id ? null : current))
-    }, duration)
+    }, scaledMotionDuration(duration, 20))
   }
 
   useEffect(() => {
@@ -806,6 +852,24 @@ function App() {
         ? 0
         : CHIP_STACK_IMPACT_MS + (source === 'drag' ? 25 : 0),
     )
+    return true
+  }
+
+  const handleRemoveLastBet = (target: keyof Bets) => {
+    if (isDealing) return false
+
+    const { nextLedger, removedValue } = removeLastWagerChip(
+      wagerChipLedgerRef.current,
+      target,
+    )
+    if (removedValue === null || removedValue > bets[target]) return false
+
+    replaceWagerChipLedger(nextLedger)
+    setBets((current) => ({
+      ...current,
+      [target]: Math.max(0, current[target] - removedValue),
+    }))
+    setFormError(null)
     return true
   }
 
@@ -914,13 +978,15 @@ function App() {
       casinoAudio.playCardLand(
         `${roundId}:deal:${motion.sequence}:land`,
         side,
-        dealContactDelayMs(window.innerWidth, reducedMotion),
+        scaledMotionDuration(
+          dealContactDelayMs(window.innerWidth, reducedMotion),
+        ),
       )
     }
 
     dealPhaseTimerRef.current = window.setTimeout(
       () => completeDealMotion(motion),
-      motionFallbackMs('dealer'),
+      scaledMotionDuration(motionFallbackMs('dealer'), 30),
     )
   }
 
@@ -946,7 +1012,7 @@ function App() {
     dealGapTimerRef.current = window.setTimeout(() => {
       dealGapTimerRef.current = null
       startNextDealCard(signal.roundId)
-    }, 70)
+    }, scaledMotionDuration(70, 20))
   }
 
   function startDealSequence(
@@ -1134,6 +1200,9 @@ function App() {
     gameRef.current = nextGame
     setGame(nextGame)
     setBets({ ...EMPTY_BETS })
+    setSelectedChip(100)
+    setFormError(null)
+    setDetailView(null)
     clearVisualWagers()
     setOutcomeMotion({
       id: current.id,
@@ -1149,7 +1218,7 @@ function App() {
       },
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
         ? 30
-        : OUTCOME_MOTION_MS,
+        : scaledMotionDuration(OUTCOME_MOTION_MS, 30),
     )
     if (shouldAnimateSettlement) {
       settlementLockRef.current = true
@@ -1190,7 +1259,7 @@ function App() {
           settlementCheer,
           3_500,
         )
-      }, 720)
+      }, scaledMotionDuration(720, 20))
     }
     const releaseSettlementTable = () => {
       settlementMotionTimerRef.current = null
@@ -1214,12 +1283,12 @@ function App() {
         releaseSettlementTable,
         window.matchMedia('(prefers-reduced-motion: reduce)').matches
           ? 30
-          : dealerSettlementDuration({
+          : scaledMotionDuration(dealerSettlementDuration({
               id: current.id,
               net: settlement.net,
               bets: current.bets,
               returns: settlement.breakdown,
-            }) + 180,
+            }) + 180, 30),
       )
     } else {
       releaseSettlementTable()
@@ -1339,7 +1408,9 @@ function App() {
     ).matches
     roundPreludeTimerRef.current = window.setTimeout(
       () => commitRound(intent),
-      reducedMotion ? 20 : intent.playMode === 'fly' ? 540 : 720,
+      reducedMotion
+        ? 20
+        : scaledMotionDuration(intent.playMode === 'fly' ? 540 : 720, 20),
     )
 
     window.requestAnimationFrame(() => {
@@ -1449,7 +1520,7 @@ function App() {
       () => completeNewShoeMotion(motion),
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
         ? 20
-        : NEW_SHOE_MOTION_MS,
+        : scaledMotionDuration(NEW_SHOE_MOTION_MS, 20),
     )
   }
 
@@ -1778,7 +1849,7 @@ function App() {
       finalizeLockRef.current = true
       settleTimerRef.current = window.setTimeout(
         () => finalizeRound(roundId),
-        260,
+        scaledMotionDuration(260, 20),
       )
       return
     }
@@ -1891,7 +1962,7 @@ function App() {
     } else {
       flipFallbackTimerRef.current = window.setTimeout(
         () => completeRevealCard(current.id, cardId),
-        motionFallbackMs(actor),
+        scaledMotionDuration(motionFallbackMs(actor), 30),
       )
     }
   }
@@ -1940,7 +2011,9 @@ function App() {
       if (current?.id === roundId && expected?.id === cardId) {
         beginRevealCardRef.current(cardId, 'dealer')
       }
-    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 20 : 420)
+    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? 20
+      : scaledMotionDuration(420, 20))
 
     return () => {
       if (autoFlipTimerRef.current !== null) {
@@ -1958,6 +2031,7 @@ function App() {
     roadFullscreen,
     roundReady,
     rulesOpen,
+    scaledMotionDuration,
   ])
 
   const handleDeal = () => {
@@ -2203,7 +2277,10 @@ function App() {
   }
 
   return (
-    <div className="app-shell is-minimal-table">
+    <div
+      className="app-shell is-minimal-table"
+      data-motion-profile={effectiveMotionProfile}
+    >
       <a className="skip-link" href="#game-table">
         跳到牌桌
       </a>
@@ -2222,6 +2299,7 @@ function App() {
         <nav aria-label="主导航">
           <button onClick={() => openDetailView('road')}>路单大屏</button>
           <button onClick={() => openDetailView('history')}>牌局记录</button>
+          <button onClick={() => openDetailView('lab')}>概率实验</button>
           <button onClick={openRulesModal}>规则与来源</button>
         </nav>
 
@@ -2361,6 +2439,7 @@ function App() {
                 key={settlementMotion?.id ?? 'dealer-settlement-idle'}
                 motion={settlementMotion}
                 stageRef={tableStageRef}
+                motionProfile={effectiveMotionProfile}
               />
               <div className="table-corner-controls">
                 <button
@@ -2391,6 +2470,25 @@ function App() {
                 >
                   <RefreshCw size={15} aria-hidden="true" />
                   <span>新牌靴</span>
+                </button>
+                <button
+                  type="button"
+                  className="table-settings-toggle"
+                  onClick={openSettingsModal}
+                  aria-label="打开体验设置"
+                >
+                  <Settings2 size={15} aria-hidden="true" />
+                  <span>体验设置</span>
+                </button>
+                <button
+                  type="button"
+                  className="table-reset-toggle"
+                  onClick={openResetModal}
+                  disabled={isDealing}
+                  aria-label="重置模拟"
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  <span>重置模拟</span>
                 </button>
                 <div className="table-simulation-corner">
                   <span aria-hidden="true">九</span>
@@ -2597,6 +2695,7 @@ function App() {
                 hasLastBets={totalBets(game.lastBets) > 0}
                 onSelectChip={setSelectedChip}
                 onAddBet={handleAddBet}
+                onRemoveLastBet={handleRemoveLastBet}
                 onClear={() => {
                   setBets({ ...EMPTY_BETS })
                   clearVisualWagers()
@@ -2617,6 +2716,13 @@ function App() {
             </section>
           </div>
         </section>
+
+        {ruleTraceResult && (
+          <RoundRuleTrace
+            result={ruleTraceResult}
+            revealedCount={ruleTraceRevealedCount}
+          />
+        )}
 
         <section className="table-companion" id="table-details">
           <div className="compact-shoe-stats" aria-label="当前牌靴统计">
@@ -2654,6 +2760,14 @@ function App() {
               <History size={16} />
               完整牌局记录
             </button>
+            <button
+              className={detailView === 'lab' ? 'is-active' : ''}
+              onClick={() => setDetailView(detailView === 'lab' ? null : 'lab')}
+              aria-pressed={detailView === 'lab'}
+            >
+              <FlaskConical size={16} />
+              概率实验室
+            </button>
             <button onClick={openRulesModal}>
               <BookOpen size={16} />
               规则与真实性
@@ -2676,6 +2790,8 @@ function App() {
             onExportJson={exportJson}
           />
         )}
+
+        {detailView === 'lab' && <ProbabilityLab />}
 
         <section className="simulator-disclosure">
           <ShieldCheck size={20} />
@@ -2719,41 +2835,27 @@ function App() {
 
       <RulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
 
-      {resetOpen && (
-        <Modal title="重置全部本机模拟数据？" onClose={() => setResetOpen(false)}>
-          <div className="confirm-copy">
-            <CircleAlert size={30} />
-            <p>这会清除当前浏览器中的牌靴、最近 500 局记录和教学分余额，且无法撤销。</p>
-            <div>
-              <button className="secondary-button" onClick={() => setResetOpen(false)}>
-                取消
-              </button>
-              <button className="danger-button" onClick={resetSimulation}>
-                确认重置
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <ExperienceSettingsModal
+        open={settingsOpen}
+        audioEnabled={audioEnabled}
+        audioMix={audioMix}
+        motionProfile={motionProfile}
+        effectiveMotionProfile={effectiveMotionProfile}
+        disabled={isDealing}
+        onAudioMixChange={handleAudioMixChange}
+        onMotionProfileChange={handleMotionProfileChange}
+        onClose={() => setSettingsOpen(false)}
+      />
 
-      {newShoeOpen && (
-        <Modal title="手动开启新牌靴？" onClose={() => setNewShoeOpen(false)}>
-          <div className="confirm-copy">
-            <RefreshCw size={30} />
-            <p>
-              当前牌靴剩余 {cardsRemaining(game.shoe)} 张。开启新牌靴会重置当前路单，但不会删除完整历史记录。
-            </p>
-            <div>
-              <button className="secondary-button" onClick={() => setNewShoeOpen(false)}>
-                继续本靴
-              </button>
-              <button className="confirm-button" onClick={replaceShoe}>
-                开启新牌靴
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <TableMaintenanceModals
+        resetOpen={resetOpen}
+        newShoeOpen={newShoeOpen}
+        cardsRemaining={cardsRemaining(game.shoe)}
+        onCloseReset={() => setResetOpen(false)}
+        onConfirmReset={resetSimulation}
+        onCloseNewShoe={() => setNewShoeOpen(false)}
+        onConfirmNewShoe={replaceShoe}
+      />
     </div>
   )
 }

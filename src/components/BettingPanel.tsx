@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { CircleDollarSign, Eye, RotateCcw, Trash2 } from 'lucide-react'
 import { ChipDragLayer } from './ChipDragLayer'
 import { ChipStackVisual } from './ChipStackVisual'
@@ -43,6 +44,7 @@ interface BettingPanelProps {
     amount: number,
     source: 'tap' | 'drag',
   ) => boolean
+  onRemoveLastBet: (target: keyof Bets) => boolean | void
   onClear: () => void
   onRepeat: () => void
   onFly: () => void
@@ -72,6 +74,7 @@ export function BettingPanel({
   hasLastBets,
   onSelectChip,
   onAddBet,
+  onRemoveLastBet,
   onClear,
   onRepeat,
   onFly,
@@ -88,7 +91,12 @@ export function BettingPanel({
       <div className="felt-betting-heading">
         <div>
           <span className="dealer-call-dot" aria-hidden="true" />
-          <p>{isDealing ? 'NO MORE BETS · 停止下注' : 'PLACE YOUR BETS · 请将筹码放到下注区'}</p>
+          <p>
+            <span className="betting-call-secondary">
+              {isDealing ? 'NO MORE BETS · ' : 'PLACE YOUR BETS · '}
+            </span>
+            {isDealing ? '停止下注' : '请将筹码放到下注区'}
+          </p>
         </div>
         <div className="table-credit" aria-live="polite">
           <span>模拟积分 · 不可兑换</span>
@@ -103,43 +111,64 @@ export function BettingPanel({
             `${limit.min.toLocaleString('zh-CN')} 至 ` +
             `${limit.max.toLocaleString('zh-CN')} 分，每次 ` +
             `${limit.step.toLocaleString('zh-CN')} 分`
+          const lastChip = wagerChipLedger[option.key].at(-1)
 
           return (
-            <button
-              key={option.key}
-              className={`bet-zone ${option.className} ${bets[option.key] > 0 ? 'has-bet' : ''}`}
-              onClick={() => onAddBet(option.key, selectedChip, 'tap')}
-              disabled={isDealing}
-              data-bet-target={option.key}
-              data-chip-drop-target={option.key}
-              aria-label={`下注${BET_LABELS[option.key]}，当前 ${bets[option.key]} 分，限额 ${limitLabel}`}
-            >
-              <span className="bet-zone-label">
-                {BET_LABELS[option.key]}
-                {option.key === 'player' && <small>PLAYER</small>}
-                {option.key === 'banker' && <small>BANKER</small>}
-                {option.key === 'tie' && <small>TIE</small>}
-              </span>
-              <span className="bet-zone-meta">
-                <span className="bet-zone-odds">{option.odds}</span>
-                <small>
-                  限额 {formatCompactLimit(limit.min)}–{formatCompactLimit(limit.max)}
-                </small>
-              </span>
-              <span
-                className="table-chip-anchor"
-                data-chip-stack-anchor={option.key}
-                aria-hidden="true"
+            <Fragment key={option.key}>
+              <button
+                className={`bet-zone ${option.className} ${bets[option.key] > 0 ? 'has-bet' : ''}`}
+                onClick={() => onAddBet(option.key, selectedChip, 'tap')}
+                disabled={isDealing}
+                data-bet-target={option.key}
+                data-chip-drop-target={option.key}
+                aria-label={`下注${BET_LABELS[option.key]}，当前 ${bets[option.key]} 分，限额 ${limitLabel}`}
               >
-                {bets[option.key] > 0 && (
-                  <ChipStackVisual
-                    amount={bets[option.key]}
-                    chips={wagerChipLedger[option.key]}
-                    className="placed-chip table-chip-stack"
-                  />
-                )}
-              </span>
-            </button>
+                <span className="bet-zone-label">
+                  {BET_LABELS[option.key]}
+                  {option.key === 'player' && <small>PLAYER</small>}
+                  {option.key === 'banker' && <small>BANKER</small>}
+                  {option.key === 'tie' && <small>TIE</small>}
+                </span>
+                <span className="bet-zone-meta">
+                  <span className="bet-zone-odds">{option.odds}</span>
+                  <small>
+                    限额 {formatCompactLimit(limit.min)}–{formatCompactLimit(limit.max)}
+                  </small>
+                </span>
+                <span
+                  className="table-chip-anchor"
+                  data-chip-stack-anchor={option.key}
+                  aria-hidden="true"
+                >
+                  {bets[option.key] > 0 && (
+                    <ChipStackVisual
+                      amount={bets[option.key]}
+                      chips={wagerChipLedger[option.key]}
+                      className="placed-chip table-chip-stack"
+                    />
+                  )}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="bet-zone-undo"
+                style={{ gridArea: option.key }}
+                onClick={() => onRemoveLastBet(option.key)}
+                disabled={isDealing || lastChip === undefined}
+                data-remove-last-chip={option.key}
+                data-last-chip-value={lastChip}
+                aria-label={
+                  lastChip === undefined
+                    ? `${BET_LABELS[option.key]}下注区没有可撤回筹码`
+                    : `撤回${BET_LABELS[option.key]}最后一枚筹码，${formatPoints(lastChip)} 分`
+                }
+              >
+                <RotateCcw size={12} aria-hidden="true" />
+                <span aria-hidden="true">
+                  {lastChip === undefined ? '—' : formatCompactLimit(lastChip)}
+                </span>
+              </button>
+            </Fragment>
           )
         })}
       </div>
