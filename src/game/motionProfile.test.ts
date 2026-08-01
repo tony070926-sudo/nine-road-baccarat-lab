@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_MOTION_PROFILE,
   MOTION_PROFILE_STORAGE_KEY,
+  dealMotionDuration,
   isMotionProfile,
   loadMotionProfile,
   motionDuration,
@@ -79,5 +80,13 @@ describe('motionProfile', () => {
     expect(motionDuration(1_000, 'reduced')).toBe(0)
     expect(motionDuration(Number.NaN, 'standard')).toBe(0)
     expect(motionDuration(-50, 'standard')).toBe(0)
+  })
+
+  it('keeps fast opening deals and their mobile variant inside the two-second budget', () => {
+    expect(dealMotionDuration(880, 'cinematic')).toBe(1_144)
+    expect(dealMotionDuration(880, 'standard')).toBe(880)
+    expect(dealMotionDuration(880, 'fast')).toBe(396)
+    expect(dealMotionDuration(760, 'fast')).toBe(342)
+    expect(dealMotionDuration(880, 'reduced')).toBe(0)
   })
 })

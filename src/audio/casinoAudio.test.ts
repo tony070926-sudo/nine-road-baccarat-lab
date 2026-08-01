@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  AUDIO_SAMPLE_RETRY_MS,
   CasinoAudioDirector,
   DEFAULT_CASINO_AUDIO_MIX,
   loadAudioMix,
@@ -156,6 +157,7 @@ function installWebAudioHarness(
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -368,6 +370,43 @@ describe('CasinoAudioDirector motion timing', () => {
 
     expect(harness.oscillatorStarts).toHaveLength(1)
     expect(harness.bufferStarts[0]).toBe(18)
+  })
+
+  it('retries failed recordings after the ten-minute offline interval', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(5_000)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        arrayBuffer: vi.fn(async () => new ArrayBuffer(8)),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(19)
+    installWebAudioHarness(director, harness.graph)
+    const internals = director as unknown as {
+      loadSample(
+        context: AudioContext,
+        sampleId: 'chip-lay-1',
+      ): Promise<AudioBuffer | null>
+      sampleBuffers: Map<string, AudioBuffer>
+    }
+
+    await expect(
+      internals.loadSample(harness.graph.context, 'chip-lay-1'),
+    ).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(AUDIO_SAMPLE_RETRY_MS - 1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(internals.sampleBuffers.has('chip-lay-1')).toBe(true)
   })
 
   it('falls through from WAV to Ogg when one encoding cannot decode', async () => {

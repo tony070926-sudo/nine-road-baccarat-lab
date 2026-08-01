@@ -110,7 +110,10 @@ import {
   newlyVisibleUndealtCardIds,
   type DealMotionToken,
 } from './game/motion'
-import type { MotionProfile } from './game/motionProfile'
+import {
+  dealMotionDuration,
+  type MotionProfile,
+} from './game/motionProfile'
 import {
   CHIP_STACK_IMPACT_MS,
   appendWagerChip,
@@ -519,7 +522,10 @@ function App() {
 
   useEffect(() => {
     const monitor = createConnectivityMonitor({
-      onChange: ({ status }) => setConnectivityStatus(status),
+      onChange: ({ status }) => {
+        setConnectivityStatus(status)
+        if (status === 'online') casinoAudio.retryFailedSamples()
+      },
     })
     monitor.start()
     return () => monitor.stop()
@@ -781,6 +787,7 @@ function App() {
       !pendingNextCard ||
       !pendingNextRequiresUser ||
       rulesOpen ||
+      settingsOpen ||
       resetOpen ||
       newShoeOpen ||
       roadFullscreen
@@ -812,6 +819,7 @@ function App() {
     roadFullscreen,
     roundReady,
     rulesOpen,
+    settingsOpen,
   ])
 
   const handleAddBet = (
@@ -978,8 +986,9 @@ function App() {
       casinoAudio.playCardLand(
         `${roundId}:deal:${motion.sequence}:land`,
         side,
-        scaledMotionDuration(
+        dealMotionDuration(
           dealContactDelayMs(window.innerWidth, reducedMotion),
+          effectiveMotionProfile,
         ),
       )
     }
@@ -1991,6 +2000,7 @@ function App() {
       pendingNextRequiresUser ||
       flippingCardId ||
       rulesOpen ||
+      settingsOpen ||
       resetOpen ||
       newShoeOpen ||
       roadFullscreen
@@ -2032,6 +2042,7 @@ function App() {
     roundReady,
     rulesOpen,
     scaledMotionDuration,
+    settingsOpen,
   ])
 
   const handleDeal = () => {

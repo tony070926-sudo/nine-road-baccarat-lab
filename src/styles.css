@@ -8085,6 +8085,15 @@ footer p {
   animation-duration: 1404ms !important;
 }
 
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping.is-drag-commit,
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping.is-drag-commit .reveal-card-inner {
+  animation-duration: 559ms !important;
+}
+
+.app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping .card-reveal-hand {
+  animation-duration: 1144ms !important;
+}
+
 .app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping,
 .app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping .reveal-card-inner,
 .app-shell[data-motion-profile="cinematic"] .reveal-card.is-flipping::after {
@@ -8120,11 +8129,11 @@ footer p {
 }
 
 .app-shell[data-motion-profile="fast"] .reveal-card.is-being-dealt {
-  --deal-motion-duration: 484ms !important;
+  --deal-motion-duration: 396ms !important;
 }
 
 .app-shell[data-motion-profile="fast"] .dealer-arm-bridge-deal {
-  --dealer-rig-duration: 484ms !important;
+  --dealer-rig-duration: 396ms !important;
 }
 
 .app-shell[data-motion-profile="fast"] .dealer-arm-bridge-reveal {
@@ -8139,6 +8148,10 @@ footer p {
 .app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping.is-drag-commit,
 .app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping.is-drag-commit .reveal-card-inner {
   animation-duration: 237ms !important;
+}
+
+.app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping .card-reveal-hand {
+  animation-duration: 484ms !important;
 }
 
 .app-shell[data-motion-profile="fast"] .reveal-card.is-auto-flipping,
@@ -8209,6 +8222,10 @@ footer p {
     animation-duration: 1170ms !important;
   }
 
+  .app-shell[data-motion-profile="cinematic"] .reveal-card.is-user-flipping .card-reveal-hand {
+    animation-duration: 988ms !important;
+  }
+
   .app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping,
   .app-shell[data-motion-profile="cinematic"] .reveal-card.is-auto-flipping .reveal-card-inner,
   .app-shell[data-motion-profile="cinematic"] .reveal-card.is-flipping::after {
@@ -8217,8 +8234,8 @@ footer p {
 
   .app-shell[data-motion-profile="fast"] .reveal-card.is-being-dealt,
   .app-shell[data-motion-profile="fast"] .dealer-arm-bridge-deal {
-    --deal-motion-duration: 418ms !important;
-    --dealer-rig-duration: 418ms !important;
+    --deal-motion-duration: 342ms !important;
+    --dealer-rig-duration: 342ms !important;
   }
 
   .app-shell[data-motion-profile="fast"] .dealer-arm-bridge-reveal {
@@ -8228,6 +8245,10 @@ footer p {
   .app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping,
   .app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping .reveal-card-inner {
     animation-duration: 495ms !important;
+  }
+
+  .app-shell[data-motion-profile="fast"] .reveal-card.is-user-flipping .card-reveal-hand {
+    animation-duration: 418ms !important;
   }
 
   .app-shell[data-motion-profile="fast"] .reveal-card.is-auto-flipping,

@@ -26,6 +26,7 @@ const AUDIO_MIX_KEY = 'nine-road-baccarat:audio-mix-v1'
 const AMBIENT_LEVEL = 0.018
 const MASTER_LEVEL = 0.72
 const MAX_EVENT_IDS = 128
+export const AUDIO_SAMPLE_RETRY_MS = 600_000
 
 export type CasinoAudioMixChannel =
   | 'master'
@@ -140,7 +141,9 @@ export class CasinoAudioDirector {
   private sampleBufferContext: AudioContext | null = null
   private sampleBuffers = new Map<AudioSampleId, AudioBuffer>()
   private sampleLoads = new Map<AudioSampleId, Promise<AudioBuffer | null>>()
-  private failedSamples = new Set<AudioSampleId>()
+  private failedSamples = new Map<AudioSampleId, number>()
+  private sampleRetryTimer: ReturnType<typeof globalThis.setTimeout> | null =
+    null
   private recentEventIds: string[] = []
   private recentEventSet = new Set<string>()
   private pendingEventIds = new Set<string>()
@@ -194,6 +197,28 @@ export class CasinoAudioDirector {
     level: number,
   ): CasinoAudioMix {
     return this.setMix({ [channel]: level })
+  }
+
+  /** Retry recorded samples immediately after connectivity is confirmed. */
+  retryFailedSamples() {
+    if (this.failedSamples.size === 0) return
+
+    const context = this.graph?.context
+    const sampleIds = [...this.failedSamples.keys()]
+    this.clearSampleRetryTimer()
+    this.failedSamples.clear()
+    if (
+      !context ||
+      context.state === 'closed' ||
+      !this.enabled ||
+      !this.pageVisible
+    ) {
+      return
+    }
+
+    void Promise.all(
+      sampleIds.map((sampleId) => this.loadSample(context, sampleId)),
+    )
   }
 
   async unlock(): Promise<boolean> {
@@ -789,6 +814,7 @@ export class CasinoAudioDirector {
       this.sampleBufferContext = null
       this.sampleBuffers.clear()
       this.sampleLoads.clear()
+      this.clearSampleRetryTimer()
       this.failedSamples.clear()
       this.suspendPromise = null
     }
@@ -858,7 +884,54 @@ export class CasinoAudioDirector {
     this.sampleBufferContext = context
     this.sampleBuffers.clear()
     this.sampleLoads.clear()
+    this.clearSampleRetryTimer()
     this.failedSamples.clear()
+  }
+
+  private clearSampleRetryTimer() {
+    if (this.sampleRetryTimer === null) return
+    globalThis.clearTimeout(this.sampleRetryTimer)
+    this.sampleRetryTimer = null
+  }
+
+  private scheduleSampleRetry(context: AudioContext, delayMs: number) {
+    if (this.sampleRetryTimer !== null || context.state === 'closed') return
+
+    const timer = globalThis.setTimeout(() => {
+      this.sampleRetryTimer = null
+      void this.retryExpiredSamples(context)
+    }, Math.max(0, delayMs))
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    this.sampleRetryTimer = timer
+  }
+
+  private async retryExpiredSamples(context: AudioContext) {
+    if (
+      this.sampleBufferContext !== context ||
+      context.state === 'closed' ||
+      !this.enabled ||
+      !this.pageVisible
+    ) {
+      return
+    }
+
+    const now = Date.now()
+    const expiredSampleIds = [...this.failedSamples.entries()]
+      .filter(([, failedAt]) => now - failedAt >= AUDIO_SAMPLE_RETRY_MS)
+      .map(([sampleId]) => sampleId)
+
+    expiredSampleIds.forEach((sampleId) => this.failedSamples.delete(sampleId))
+    await Promise.all(
+      expiredSampleIds.map((sampleId) => this.loadSample(context, sampleId)),
+    )
+
+    if (this.sampleRetryTimer !== null || this.failedSamples.size === 0) return
+    const nextDelay = Math.min(
+      ...[...this.failedSamples.values()].map((failedAt) =>
+        Math.max(0, failedAt + AUDIO_SAMPLE_RETRY_MS - Date.now()),
+      ),
+    )
+    this.scheduleSampleRetry(context, nextDelay)
   }
 
   private loadSample(
@@ -868,8 +941,17 @@ export class CasinoAudioDirector {
     this.prepareSampleContext(context)
     const ready = this.sampleBuffers.get(sampleId)
     if (ready) return Promise.resolve(ready)
-    if (this.failedSamples.has(sampleId) || context.state === 'closed') {
+    if (context.state === 'closed') {
       return Promise.resolve(null)
+    }
+    const failedAt = this.failedSamples.get(sampleId)
+    if (failedAt !== undefined) {
+      const retryDelay = failedAt + AUDIO_SAMPLE_RETRY_MS - Date.now()
+      if (retryDelay > 0) {
+        this.scheduleSampleRetry(context, retryDelay)
+        return Promise.resolve(null)
+      }
+      this.failedSamples.delete(sampleId)
     }
     const pending = this.sampleLoads.get(sampleId)
     if (pending) return pending
@@ -891,6 +973,7 @@ export class CasinoAudioDirector {
               return null
             }
             this.sampleBuffers.set(sampleId, buffer)
+            this.failedSamples.delete(sampleId)
             return buffer
           } catch {
             // Try the next declared encoding before using synthesized audio.
@@ -899,7 +982,8 @@ export class CasinoAudioDirector {
         throw new Error('No compatible audio sample encoding')
       } catch {
         if (this.sampleBufferContext === context) {
-          this.failedSamples.add(sampleId)
+          this.failedSamples.set(sampleId, Date.now())
+          this.scheduleSampleRetry(context, AUDIO_SAMPLE_RETRY_MS)
         }
         return null
       } finally {

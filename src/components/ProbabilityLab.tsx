@@ -135,6 +135,14 @@ export function ProbabilityLab({
     setError(null)
   }
 
+  const selectRounds = (nextRounds: ProbabilityLabRoundCount) => {
+    if (nextRounds === rounds) return
+    setRounds(nextRounds)
+    setReport(null)
+    setError(null)
+    setStatus('idle')
+  }
+
   return (
     <section
       className="probability-lab"
@@ -152,7 +160,7 @@ export function ProbabilityLab({
           <button
             type="button"
             key={option}
-            onClick={() => setRounds(option)}
+            onClick={() => selectRounds(option)}
             aria-pressed={rounds === option}
             disabled={status === 'running'}
           >

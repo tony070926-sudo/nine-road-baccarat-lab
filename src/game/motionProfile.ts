@@ -47,6 +47,11 @@ const durationScales: Readonly<Record<EffectiveMotionProfile, number>> = {
   reduced: 0,
 }
 
+const dealDurationScales: Readonly<Record<EffectiveMotionProfile, number>> = {
+  ...durationScales,
+  fast: 0.45,
+}
+
 function getBrowserStorage(): MotionProfileStorage | null {
   try {
     if (typeof window === 'undefined') return null
@@ -112,4 +117,17 @@ export function motionDuration(
 ): number {
   if (!Number.isFinite(baseDurationMs) || baseDurationMs <= 0) return 0
   return Math.round(baseDurationMs * durationScales[profile])
+}
+
+/**
+ * Opening deals get a little more headroom in fast mode so four initial cards
+ * still complete within the advertised two-second pace. Other motion keeps the
+ * gentler 0.55 scale used by manual reveals and settlement choreography.
+ */
+export function dealMotionDuration(
+  baseDurationMs: number,
+  profile: EffectiveMotionProfile,
+): number {
+  if (!Number.isFinite(baseDurationMs) || baseDurationMs <= 0) return 0
+  return Math.round(baseDurationMs * dealDurationScales[profile])
 }
