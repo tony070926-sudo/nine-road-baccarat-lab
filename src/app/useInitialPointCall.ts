@@ -16,7 +16,7 @@ export function initialPointCallHold(
   )
 }
 
-interface BeginInitialPointCallInput {
+export interface BeginInitialPointCallInput {
   roundId: string
   profile: EffectiveMotionProfile
   completion: Promise<unknown>

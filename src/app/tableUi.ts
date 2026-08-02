@@ -8,7 +8,13 @@ import {
   type RevealSide,
 } from '../game/reveal'
 import { tableLeaseIsSupported } from '../game/tableLease'
-import type { Card, DealResult, PendingRound, RoundRecord, Winner } from '../types'
+import type {
+  Card,
+  DealResult,
+  PendingRound,
+  RoundRecord,
+  Winner,
+} from '../types'
 
 export interface ShoeRecordSummary {
   count: number
@@ -30,6 +36,11 @@ export interface PendingRoundView {
   playerTotal: number | null
   bankerTotal: number | null
   displayTotal: number
+}
+
+export interface PendingPresentationFlags {
+  pointCallActive: boolean
+  physicalDealActive: boolean
 }
 
 export function summarizeShoeRecords(
@@ -96,11 +107,28 @@ export function derivePendingRoundView(
     nextCard,
     manualSides,
     nextSide,
-    nextRequiresUser:
-      nextSide !== null && manualSides.includes(nextSide),
+    nextRequiresUser: nextSide !== null && manualSides.includes(nextSide),
     playerTotal: playerCards.length > 0 ? handTotal(playerCards) : null,
     bankerTotal: bankerCards.length > 0 ? handTotal(bankerCards) : null,
     displayTotal: visibleCardIds.size,
+  }
+}
+
+export function derivePendingPresentationFlags(
+  round: PendingRound | null,
+  revealedCount: number,
+  dealtCardIds: ReadonlySet<string>,
+  announcedRoundId: string | null,
+): PendingPresentationFlags {
+  if (!round) return { pointCallActive: false, physicalDealActive: false }
+  const pointCallActive = revealedCount === 4 && announcedRoundId !== round.id
+  return {
+    pointCallActive,
+    physicalDealActive:
+      !pointCallActive &&
+      visibleRevealCardIds(round.result, revealedCount).some(
+        (cardId) => !dealtCardIds.has(cardId),
+      ),
   }
 }
 
@@ -121,6 +149,11 @@ export function outcomeLabel(winner: Winner): string {
   if (winner === 'banker') return '庄家胜'
   if (winner === 'player') return '闲家胜'
   return '和局'
+}
+
+export function openingResultCall(result: DealResult): string {
+  const naturalCall = result.natural ? '，天然牌' : ''
+  return `闲家 ${handTotal(result.playerCards.slice(0, 2))} 点，庄家 ${handTotal(result.bankerCards.slice(0, 2))} 点${naturalCall}`
 }
 
 export function finalResultCall(result: DealResult): string {

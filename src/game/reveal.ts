@@ -83,6 +83,27 @@ export function openingDealCardIds(result: DealResult): string[] {
     .map((card) => card.id)
 }
 
+/**
+ * Rebuild only cards whose physical arrival is proven by durable reveal
+ * progress. A visible next third card may not have finished dealing when a
+ * page is interrupted, so recovery must replay that deal instead of silently
+ * materialising it.
+ */
+export function restoredDealtCardIds(
+  result: DealResult,
+  revealedCount: number,
+): string[] {
+  if (revealedCount <= 0) return []
+  const revealedThirdCards = revealOrder(result).slice(
+    OPENING_CARD_COUNT,
+    Math.max(OPENING_CARD_COUNT, revealedCount),
+  )
+  return [
+    ...openingDealCardIds(result),
+    ...revealedThirdCards.map((card) => card.id),
+  ]
+}
+
 export function nextRevealCard(
   result: DealResult,
   revealedCount: number,

@@ -15,6 +15,7 @@ import {
   manualRevealSides,
   nextRevealCard,
   openingDealCardIds,
+  restoredDealtCardIds,
   resolveRevealControl,
   revealOrder,
   revealIsComplete,
@@ -239,6 +240,39 @@ describe('manual reveal sequencing', () => {
       'p1',
       'p2',
       'b1',
+    ])
+  })
+
+  it('restores only third cards whose reveal was durably recorded', () => {
+    const sixCardRound = result(['p1', 'b1', 'p2', 'b2', 'p3', 'b3'])
+
+    expect(restoredDealtCardIds(sixCardRound, 0)).toEqual([])
+    expect(restoredDealtCardIds(sixCardRound, 1)).toEqual([
+      'p1',
+      'b1',
+      'p2',
+      'b2',
+    ])
+    expect(restoredDealtCardIds(sixCardRound, 4)).toEqual([
+      'p1',
+      'b1',
+      'p2',
+      'b2',
+    ])
+    expect(restoredDealtCardIds(sixCardRound, 5)).toEqual([
+      'p1',
+      'b1',
+      'p2',
+      'b2',
+      'p3',
+    ])
+    expect(restoredDealtCardIds(sixCardRound, 6)).toEqual([
+      'p1',
+      'b1',
+      'p2',
+      'b2',
+      'p3',
+      'b3',
     ])
   })
 

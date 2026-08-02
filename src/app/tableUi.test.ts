@@ -4,11 +4,14 @@ import {
   createSeededRandomInt,
   createShoe,
   dealRound,
+  handTotal,
 } from '../game/baccarat'
-import type { PendingRound, RoundRecord, Winner } from '../types'
+import type { Card, PendingRound, RoundRecord, Winner } from '../types'
 import {
+  derivePendingPresentationFlags,
   derivePendingRoundView,
   finalResultCall,
+  openingResultCall,
   roundRevealInstruction,
   summarizeShoeRecords,
 } from './tableUi'
@@ -29,10 +32,35 @@ function pendingRound(): PendingRound {
   }
 }
 
+function presentationRound(cardIds: string[]): PendingRound {
+  const base = pendingRound()
+  const dealOrder: Card[] = cardIds.map((id) => ({
+    id,
+    rank: 'A',
+    suit: 'spades',
+    deck: 1,
+  }))
+  return {
+    ...base,
+    result: {
+      ...base.result,
+      playerCards: [dealOrder[0], dealOrder[2], ...dealOrder.slice(4, 5)],
+      bankerCards: [dealOrder[1], dealOrder[3], ...dealOrder.slice(5, 6)],
+      dealOrder,
+      cardsUsed: dealOrder.length,
+      natural: dealOrder.length === 4,
+    },
+  }
+}
+
 function record(
   id: string,
   winner: Winner,
-  options: { natural?: boolean; playerPair?: boolean; bankerPair?: boolean } = {},
+  options: {
+    natural?: boolean
+    playerPair?: boolean
+    bankerPair?: boolean
+  } = {},
 ): RoundRecord {
   return {
     id,
@@ -92,6 +120,57 @@ describe('table UI selectors', () => {
     expect(view.displayTotal).toBe(0)
   })
 
+  it('separates opening point calls from physical deal presentation', () => {
+    const sixCardRound = presentationRound(['p1', 'b1', 'p2', 'b2', 'p3', 'b3'])
+    const openingIds = new Set(
+      sixCardRound.result.dealOrder.slice(0, 4).map((card) => card.id),
+    )
+
+    expect(
+      derivePendingPresentationFlags(sixCardRound, 0, new Set(), null),
+    ).toEqual({
+      pointCallActive: false,
+      physicalDealActive: true,
+    })
+    expect(
+      derivePendingPresentationFlags(sixCardRound, 4, openingIds, null),
+    ).toEqual({
+      pointCallActive: true,
+      physicalDealActive: false,
+    })
+    expect(
+      derivePendingPresentationFlags(
+        sixCardRound,
+        4,
+        openingIds,
+        sixCardRound.id,
+      ),
+    ).toEqual({
+      pointCallActive: false,
+      physicalDealActive: true,
+    })
+
+    const firstThirdId = sixCardRound.result.playerCards[2].id
+    expect(
+      derivePendingPresentationFlags(
+        sixCardRound,
+        5,
+        new Set([...openingIds, firstThirdId]),
+        sixCardRound.id,
+      ),
+    ).toEqual({ pointCallActive: false, physicalDealActive: true })
+
+    const naturalRound = presentationRound(['p1', 'b1', 'p2', 'b2'])
+    expect(
+      derivePendingPresentationFlags(
+        naturalRound,
+        4,
+        new Set(naturalRound.result.dealOrder.map((card) => card.id)),
+        naturalRound.id,
+      ),
+    ).toEqual({ pointCallActive: false, physicalDealActive: false })
+  })
+
   it('formats the final dealer call with both totals and the winner', () => {
     const result = pendingRound().result
     expect(finalResultCall(result)).toBe(
@@ -102,6 +181,13 @@ describe('table UI selectors', () => {
             ? '闲家胜'
             : '和局'
       }`,
+    )
+  })
+
+  it('formats the opening point call without leaking third-card totals', () => {
+    const result = { ...pendingRound().result, natural: true }
+    expect(openingResultCall(result)).toBe(
+      `闲家 ${handTotal(result.playerCards.slice(0, 2))} 点，庄家 ${handTotal(result.bankerCards.slice(0, 2))} 点，天然牌`,
     )
   })
 

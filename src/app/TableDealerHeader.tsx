@@ -1,8 +1,4 @@
-import type {
-  NewShoeMotion,
-  RevealActor,
-  RoundPrelude,
-} from './tableTypes'
+import type { NewShoeMotion, RevealActor, RoundPrelude } from './tableTypes'
 import {
   formatNumber,
   outcomeLabel,
@@ -21,7 +17,9 @@ interface TableDealerHeaderProps {
   roundRequesting: boolean
   roundPrelude: RoundPrelude | null
   pendingRound: PendingRound | null
-  roundReady: boolean
+  pointCallActive: boolean
+  physicalDealActive: boolean
+  roundComplete: boolean
   flippingCardId: string | null
   revealActor: RevealActor | null
   pendingNextRequiresUser: boolean
@@ -40,7 +38,9 @@ export function TableDealerHeader({
   roundRequesting,
   roundPrelude,
   pendingRound,
-  roundReady,
+  pointCallActive,
+  physicalDealActive,
+  roundComplete,
   flippingCardId,
   revealActor,
   pendingNextRequiresUser,
@@ -51,23 +51,28 @@ export function TableDealerHeader({
   revealDisplayTotal,
   records,
 }: TableDealerHeaderProps) {
-  const heading = settlementHeading
-    ?? (newShoeMotion
+  const heading =
+    settlementHeading ??
+    (newShoeMotion
       ? '荷官正在更换牌靴'
       : roundRequesting
         ? '正在锁定牌桌'
         : roundPrelude
           ? '停止下注'
           : pendingRound
-            ? !roundReady
-              ? '荷官正在发牌'
-              : flippingCardId
-                ? revealActor === 'dealer'
-                  ? '荷官正在开牌'
-                  : '请翻开牌面'
-                : pendingNextRequiresUser
-                  ? `请开${pendingNextSide ? revealSideLabel(pendingNextSide) : ''}牌`
-                  : '荷官正在开牌'
+            ? pointCallActive
+              ? '荷官宣读开局点数'
+              : physicalDealActive
+                ? '荷官正在发牌'
+                : roundComplete
+                  ? '荷官宣读最终结果'
+                  : flippingCardId
+                    ? revealActor === 'dealer'
+                      ? '荷官正在开牌'
+                      : '请翻开牌面'
+                    : pendingNextRequiresUser
+                      ? `请开${pendingNextSide ? revealSideLabel(pendingNextSide) : ''}牌`
+                      : '荷官正在开牌'
             : settledRound
               ? outcomeLabel(settledRound.winner)
               : '请下注')
@@ -108,13 +113,19 @@ export function TableDealerHeader({
         ) : pendingRound ? (
           <div className="round-net reveal-progress">
             <span>
-              {!roundReady
-                ? '按顺序发牌'
-                : pendingRound.playMode === 'fly'
-                  ? '飞牌 · 自动'
-                  : revealScopeLabel(pendingManualSides)}
+              {pointCallActive
+                ? '开局报点'
+                : physicalDealActive
+                  ? '按顺序发牌'
+                  : roundComplete
+                    ? '最终报点'
+                    : pendingRound.playMode === 'fly'
+                      ? '飞牌 · 自动'
+                      : revealScopeLabel(pendingManualSides)}
             </span>
-            <strong>{revealedCount} / {revealDisplayTotal}</strong>
+            <strong>
+              {revealedCount} / {revealDisplayTotal}
+            </strong>
           </div>
         ) : settledRound ? (
           <div
@@ -149,17 +160,21 @@ export function TableDealerHeader({
           <i />
           荷官
           <strong>
-            {settlementStatus
-              ?? (newShoeMotion
+            {settlementStatus ??
+              (newShoeMotion
                 ? '烧牌中'
                 : roundRequesting
                   ? '锁桌中'
                   : roundPrelude
                     ? '停止下注'
                     : pendingRound
-                      ? !roundReady
-                        ? '发牌中'
-                        : '牌局进行中'
+                      ? pointCallActive
+                        ? '报点中'
+                        : physicalDealActive
+                          ? '发牌中'
+                          : roundComplete
+                            ? '结果确认中'
+                            : '牌局进行中'
                       : '等待下注')}
           </strong>
         </span>
