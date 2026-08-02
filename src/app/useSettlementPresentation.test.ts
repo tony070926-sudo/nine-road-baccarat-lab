@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   MIN_PRESENTATION_HOLD_MS,
   NEXT_ROUND_HOLD_MS,
   ROAD_RECORD_HOLD_MS,
+  cancelSettlementPresentationRuntime,
   settlementPresentationHold,
   settlementPresentationCopy,
   settlementRecordIsVisible,
@@ -32,12 +33,21 @@ describe('settlement presentation timing', () => {
 
   it('publishes a result to the road only when road recording begins', () => {
     expect(settlementRecordIsVisible('round-1', null)).toBe(true)
+    expect(settlementRecordIsVisible('round-1', null, 'round-1')).toBe(false)
+    expect(settlementRecordIsVisible('round-1', null, 'round-2')).toBe(true)
     expect(
       settlementRecordIsVisible('round-1', {
         roundId: 'round-2',
         state: 'not-started',
       }),
     ).toBe(true)
+    expect(
+      settlementRecordIsVisible(
+        'round-1',
+        { roundId: 'round-2', state: 'recording-road' },
+        'round-1',
+      ),
+    ).toBe(false)
     for (const state of [
       'not-started',
       'collecting-losing-wagers',
@@ -45,7 +55,11 @@ describe('settlement presentation timing', () => {
       'paying-winners',
     ] as const) {
       expect(
-        settlementRecordIsVisible('round-1', { roundId: 'round-1', state }),
+        settlementRecordIsVisible(
+          'round-1',
+          { roundId: 'round-1', state },
+          'round-1',
+        ),
       ).toBe(false)
     }
     for (const state of [
@@ -54,9 +68,40 @@ describe('settlement presentation timing', () => {
       'complete',
     ] as const) {
       expect(
-        settlementRecordIsVisible('round-1', { roundId: 'round-1', state }),
+        settlementRecordIsVisible(
+          'round-1',
+          { roundId: 'round-1', state },
+          'round-1',
+        ),
       ).toBe(true)
     }
+  })
+
+  it('cancels local continuations without completing the presentation', () => {
+    const onComplete = vi.fn()
+    const activeRef = { current: { roundId: 'round-1', onComplete } }
+    const timerRef = { current: 73 }
+    const clearTimeout = vi.fn()
+    const clearCardSweepMotion = vi.fn()
+    const clearPresentation = vi.fn()
+    const clearReadyRound = vi.fn()
+
+    cancelSettlementPresentationRuntime({
+      activeRef,
+      timerRef,
+      clearTimeout,
+      clearCardSweepMotion,
+      clearPresentation,
+      clearReadyRound,
+    })
+
+    expect(clearTimeout).toHaveBeenCalledWith(73)
+    expect(timerRef.current).toBeNull()
+    expect(activeRef.current).toBeNull()
+    expect(clearCardSweepMotion).toHaveBeenCalledOnce()
+    expect(clearPresentation).toHaveBeenCalledOnce()
+    expect(clearReadyRound).toHaveBeenCalledOnce()
+    expect(onComplete).not.toHaveBeenCalled()
   })
 
   it('keeps the dealer call aligned with road and discard phases', () => {

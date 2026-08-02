@@ -11,9 +11,23 @@ import {
 import {
   MOTION_ASSET_URLS,
   NEW_SHOE_MOTION_MS,
-  OUTCOME_MOTION_MS,
   STARTING_BALANCE,
 } from './app/tableConfig'
+import {
+  completeDurableSettlementPresentation,
+  displayedDurableSettlement,
+  durableSettledCardState,
+  durableSettlementSnapshotIntegrity,
+  focusFirstBetZone,
+  initialDurableWagerLedger,
+  projectDurableSettlement,
+  startDurableSettlementPresentation,
+  visibleCurrentShoeRecords,
+} from './app/durableSettlement'
+import {
+  downloadHistoryCsv,
+  downloadHistoryJson,
+} from './app/historyDownloads'
 import {
   loadInitialSession,
   pendingRoundFromPersisted,
@@ -31,8 +45,6 @@ import {
   createRoundId,
   derivePendingPresentationFlags,
   derivePendingRoundView,
-  finalResultCall,
-  formatNumber,
   openingResultCall,
   outcomeLabel,
   revealSideLabel,
@@ -48,7 +60,6 @@ import { TableLeaseArbiter } from './app/tableLeaseArbiter'
 import { useTableRestoreLoop } from './app/useTableRestoreLoop'
 import {
   settlementPresentationCopy,
-  settlementRecordIsVisible,
   useSettlementPresentation,
 } from './app/useSettlementPresentation'
 import {
@@ -84,7 +95,6 @@ import {
 } from './components/TableMotionAtmosphere'
 import {
   EMPTY_BETS,
-  RULESET_VERSION,
   TABLE_LIMITS,
   cardsRemaining,
   createShoe,
@@ -98,10 +108,6 @@ import {
   revealedCardsForSide,
   sideIsCompleteFromPublicCards,
 } from './game/crowdCheer'
-import {
-  downloadTextFile,
-  historyToCsv,
-} from './game/historyExport'
 import {
   advanceRevealState,
   prepareRoundState,
@@ -173,6 +179,7 @@ import type {
   PersistedGameState,
   PlayMode,
   RevealControl,
+  RoundRecord,
   ShoeState,
 } from './types'
 import './styles.css'
@@ -183,6 +190,9 @@ function App() {
   const [tableLease] = useState(() => new TableLeaseArbiter())
   const [storageReady, setStorageReady] = useState(false)
   const [game, setGame] = useState<PersistedGameState>(initialSession.game)
+  const [presentationPending, setPresentationPending] = useState(
+    initialSession.presentationPending,
+  )
   const [bets, setBets] = useState<Bets>(
     initialSession.pendingRound
       ? { ...initialSession.pendingRound.bets }
@@ -195,7 +205,12 @@ function App() {
       ),
     )
   const [settlementWagerChipLedger, setSettlementWagerChipLedger] =
-    useState<WagerChipLedger | null>(null)
+    useState<WagerChipLedger | null>(() =>
+      initialDurableWagerLedger(
+        initialSession.game,
+        initialSession.presentationPending,
+      ),
+    )
   const [selectedChip, setSelectedChip] = useState(100)
   const [revealControl, setRevealControl] = useState<RevealControl>(initialSession.pendingRound?.revealControl ?? 'player-squeeze')
   const [audioEnabled, setAudioEnabled] = useState(loadAudioPreference)
@@ -232,6 +247,8 @@ function App() {
   const [revealAnnouncement, setRevealAnnouncement] = useState(
     initialSession.pendingRound
       ? '检测到已锁定牌局，正在取得此牌桌的独占控制权…'
+      : initialSession.presentationPending
+        ? '检测到未完成的荷官结算流程，正在取得牌桌独占控制权…'
       : '请先选择下注对象与筹码，然后确认开牌。',
   )
   const [formError, setFormError] = useState<string | null>(null)
@@ -241,9 +258,17 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [roadFullscreen, setRoadFullscreen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const durableSettlement = useMemo(
+    () => projectDurableSettlement(game, presentationPending),
+    [game, presentationPending],
+  )
   const recordedLeaderboardHigh = useMemo(
-    () => leaderboardHighFromRecordedGame(game.balance, game.history),
-    [game.balance, game.history],
+    () =>
+      leaderboardHighFromRecordedGame(
+        durableSettlement.balance,
+        durableSettlement.history,
+      ),
+    [durableSettlement.balance, durableSettlement.history],
   )
   const [activeCrowdCheer, setActiveCrowdCheer] =
     useState<ActiveCrowdCheer | null>(null)
@@ -261,6 +286,7 @@ function App() {
     cardSweepMotion,
     clearedRoundId,
     readyRoundId: settlementReadyRoundId,
+    cancelPresentation,
     startSettlementPresentation,
     handleDealerSettlementStep,
     handleDealerSettlementComplete,
@@ -295,8 +321,8 @@ function App() {
   const flippingCardRef = useRef<string | null>(null)
   const revealActorRef = useRef<RevealActor | null>(null)
   const roundReadyRef = useRef(false)
-  const roundLockRef = useRef(Boolean(initialSession.pendingRound))
-  const flipLockRef = useRef(Boolean(initialSession.pendingRound))
+  const roundLockRef = useRef(Boolean(initialSession.pendingRound || initialSession.presentationPending))
+  const flipLockRef = useRef(Boolean(initialSession.pendingRound || initialSession.presentationPending))
   const finalizeLockRef = useRef(false)
   const dealtCardIdsRef = useRef(
     new Set(
@@ -325,7 +351,8 @@ function App() {
   const roundPreludeRef = useRef<RoundPrelude | null>(null)
   const newShoeMotionTimerRef = useRef<number | null>(null)
   const newShoeMotionRef = useRef<NewShoeMotion | null>(null)
-  const settlementLockRef = useRef(false)
+  const settlementLockRef = useRef(Boolean(initialSession.presentationPending))
+  const settlementIntegrityFailureRoundIdRef = useRef<string | null>(null)
   const crowdCheerSequenceRef = useRef(0)
   const audioEventSequenceRef = useRef(0)
   const tableStageRef = useRef<HTMLElement>(null)
@@ -346,14 +373,17 @@ function App() {
     roundPrelude !== null ||
     newShoeMotion !== null ||
     pendingRound !== null ||
+    presentationPending !== null ||
     settlementPresentation !== null
   const dealingMode =
     newShoeMotion?.roundIntent?.playMode ??
     roundPrelude?.playMode ??
     pendingRound?.playMode ??
+    durableSettlement.record?.playMode ??
     null
   const displayedBets =
     settlementMotion?.bets ??
+    durableSettlement.record?.bets ??
     newShoeMotion?.roundIntent?.bets ??
     roundPrelude?.bets ??
     bets
@@ -383,11 +413,17 @@ function App() {
 
   function cancelRoundProcedure() {
     cancelInitialPointCall()
+    cancelPresentation()
     for (const timerRef of [
       flipFallbackTimerRef,
       settleTimerRef,
       focusTimerRef,
       autoFlipTimerRef,
+      crowdCheerTimerRef,
+      outcomeCheerTimerRef,
+      outcomeMotionTimerRef,
+      roundPreludeTimerRef,
+      newShoeMotionTimerRef,
     ]) {
       if (timerRef.current !== null) window.clearTimeout(timerRef.current)
       timerRef.current = null
@@ -398,97 +434,167 @@ function App() {
     flippingCardRef.current = null
     revealActorRef.current = null
     roundReadyRef.current = false
+    roundPreludeRef.current = null
+    newShoeMotionRef.current = null
     flipLockRef.current = true
     finalizeLockRef.current = false
     setActiveDealMotion(null)
     setFlippingCardId(null)
     setRevealActor(null)
     setRoundReady(false)
+    setRoundPrelude(null)
+    setNewShoeMotion(null)
+    setRoundRequesting(false)
+    setActiveCrowdCheer(null)
+    setSettlementMotion(null)
+    setSettlementWagerChipLedger(null)
+    setOutcomeMotion(null)
   }
 
   const applyCanonicalSnapshot = (
     snapshot: PersistedTableEnvelopeV2,
     ownsLease: boolean,
   ) => {
-      tableVersionRef.current = tableVersionOf(snapshot)
-      gameRef.current = snapshot.game
-      setGame(snapshot.game)
+    const failedRoundId = settlementIntegrityFailureRoundIdRef.current
+    if (failedRoundId) {
+      const integrity = durableSettlementSnapshotIntegrity(snapshot, failedRoundId)
+      if (integrity === 'reject') { tableCoordinator.adopt(snapshot); return }
+      if (integrity === 'complete') settlementIntegrityFailureRoundIdRef.current = null
+    }
+    tableCoordinator.adopt(snapshot)
+    tableVersionRef.current = tableVersionOf(snapshot)
+    gameRef.current = snapshot.game
+    setGame(snapshot.game)
+    setFormError(null)
+    setResetOpen(false)
+    setNewShoeOpen(false)
+    const marker = snapshot.presentationPending ?? null
+    setPresentationPending(marker)
 
-      if (!snapshot.pending) {
-        pendingRoundRef.current = null
-        revealedCountRef.current = 0
-        dealtCardIdsRef.current = new Set()
-        roundReadyRef.current = true
-        roundLockRef.current = false
-        flipLockRef.current = false
-        finalizeLockRef.current = false
-        setPendingRound(null)
-        setRevealedCount(0)
-        setDealtCardIds(new Set())
-        setRoundReady(true)
-        setBets({ ...EMPTY_BETS })
-        const clearedLedger = clearWagerChipLedger()
-        wagerChipLedgerRef.current = clearedLedger
-        setWagerChipLedger(clearedLedger)
+    if (!snapshot.pending) {
+      pendingRoundRef.current = null
+      revealedCountRef.current = 0
+      dealtCardIdsRef.current = new Set()
+      finalizeLockRef.current = false
+      setPendingRound(null)
+      setRevealedCount(0)
+      setDealtCardIds(new Set())
+      setBets({ ...EMPTY_BETS })
+      const clearedLedger = clearWagerChipLedger()
+      wagerChipLedgerRef.current = clearedLedger
+      setWagerChipLedger(clearedLedger)
+
+      if (marker) {
+        const record = snapshot.game.history.at(-1)
+        roundReadyRef.current = false
+        roundLockRef.current = true
+        flipLockRef.current = true
+        settlementLockRef.current = true
+        setRoundReady(false)
+        if (!record || record.id !== marker.roundId) {
+          setStorageReady(false)
+          setRevealAnnouncement('结算标记与历史记录不一致；牌桌已停止推进。')
+          return
+        }
+        const ledger = rebuildWagerChipLedger(record.bets)
+        setSettlementWagerChipLedger(ledger)
+        setRevealAnnouncement(
+          ownsLease
+            ? '已恢复未完成的结算，荷官将重新宣读结果后继续收赔与收牌。'
+            : '另一标签页正在完成本局结算；当前牌桌保持停止下注。',
+        )
+        if (ownsLease) beginDurableSettlement(record, ledger)
         return
       }
 
-      const restoredRound = pendingRoundFromPersisted(snapshot.pending)
-      const restoredCount = snapshot.pending.revealedCount
-      if (restoredCount > 4) markInitialPointCallComplete(restoredRound.id)
-      const restoration = restoredRoundPresentationState(
-        restoredRound,
-        restoredCount,
-        ownsLease,
-      )
-      const restoredDealtIds = new Set(restoration.dealtCardIds)
-
-      pendingRoundRef.current = restoredRound
-      revealedCountRef.current = restoredCount
-      dealtCardIdsRef.current = restoredDealtIds
-      roundLockRef.current = true
-      roundReadyRef.current = restoration.roundReady
-      flipLockRef.current = restoration.flipLocked
-      setPendingRound(restoredRound)
-      setRevealedCount(restoredCount)
-      setDealtCardIds(restoredDealtIds)
-      setBets({ ...restoredRound.bets })
-      setRevealControl(resolveRevealControl(restoredRound))
-      const restoredLedger = rebuildWagerChipLedger(restoredRound.bets)
-      wagerChipLedgerRef.current = restoredLedger
-      setWagerChipLedger(restoredLedger)
-      setRoundReady(restoration.roundReady)
-      setRevealAnnouncement(restoredRoundAnnouncement(restoredRound, restoration.isFullyRevealed, ownsLease))
-
-      if (restoration.isResumingProcedure) {
-        resumeRestoredRoundProcedure({
-          round: restoredRound, revealedCount: restoredCount,
-          pendingRoundRef, revealedCountRef, finalizeLockRef,
-          settleTimerRef, finalizeRoundRef,
-          motionProfile: effectiveMotionProfile,
-          beginInitialPointCall, startDealSequence,
-          announce: setRevealAnnouncement,
-        })
-      } else if (ownsLease && restoration.isFullyRevealed) {
-        finalizeLockRef.current = true
-        settleTimerRef.current = window.setTimeout(
-          () => finalizeRoundRef.current(restoredRound.id),
-          80,
-        )
-      }
+      roundReadyRef.current = true
+      roundLockRef.current = false
+      flipLockRef.current = false
+      settlementLockRef.current = false
+      setRoundReady(true)
+      setSettlementMotion(null)
+      setSettlementWagerChipLedger(null)
+      setRevealAnnouncement('请先选择下注对象与筹码，然后确认开牌。')
+      return
     }
 
+    settlementLockRef.current = false
+    setSettlementMotion(null)
+    setSettlementWagerChipLedger(null)
+    const restoredRound = pendingRoundFromPersisted(snapshot.pending)
+    const restoredCount = snapshot.pending.revealedCount
+    if (restoredCount > 4) markInitialPointCallComplete(restoredRound.id)
+    const restoration = restoredRoundPresentationState(
+      restoredRound,
+      restoredCount,
+      ownsLease,
+    )
+    const restoredDealtIds = new Set(restoration.dealtCardIds)
+
+    pendingRoundRef.current = restoredRound
+    revealedCountRef.current = restoredCount
+    dealtCardIdsRef.current = restoredDealtIds
+    roundLockRef.current = true
+    roundReadyRef.current = restoration.roundReady
+    flipLockRef.current = restoration.flipLocked
+    setPendingRound(restoredRound)
+    setRevealedCount(restoredCount)
+    setDealtCardIds(restoredDealtIds)
+    setBets({ ...restoredRound.bets })
+    setRevealControl(resolveRevealControl(restoredRound))
+    const restoredLedger = rebuildWagerChipLedger(restoredRound.bets)
+    wagerChipLedgerRef.current = restoredLedger
+    setWagerChipLedger(restoredLedger)
+    setRoundReady(restoration.roundReady)
+    setRevealAnnouncement(
+      restoredRoundAnnouncement(
+        restoredRound,
+        restoration.isFullyRevealed,
+        ownsLease,
+      ),
+    )
+
+    if (restoration.isResumingProcedure) {
+      resumeRestoredRoundProcedure({
+        round: restoredRound,
+        revealedCount: restoredCount,
+        pendingRoundRef,
+        revealedCountRef,
+        finalizeLockRef,
+        settleTimerRef,
+        finalizeRoundRef,
+        motionProfile: effectiveMotionProfile,
+        beginInitialPointCall,
+        startDealSequence,
+        announce: setRevealAnnouncement,
+      })
+    } else if (ownsLease && restoration.isFullyRevealed) {
+      finalizeLockRef.current = true
+      settleTimerRef.current = window.setTimeout(
+        () => finalizeRoundRef.current(restoredRound.id),
+        80,
+      )
+    }
+  }
+
+  function adoptCanonicalWhileHoldingLease(
+    snapshot: PersistedTableEnvelopeV2,
+  ): boolean {
+    const resumesProcedure = Boolean(
+      snapshot.pending || snapshot.presentationPending,
+    )
+    cancelRoundProcedure()
+    applyCanonicalSnapshot(snapshot, resumesProcedure)
+    if (!resumesProcedure) releaseTableLease()
+    return resumesProcedure
+  }
+
   useTableRestoreLoop({
-    initialGame: initialSession.game,
-    tableCoordinator,
-    tableLease,
+    initialGame: initialSession.game, tableCoordinator, tableLease,
     applySnapshot: applyCanonicalSnapshot,
     cancelProcedure: cancelRoundProcedure,
     releaseLease: releaseTableLease,
-    setStorageReady,
-    setFormError,
-    setNotice,
-    setRevealAnnouncement,
+    setStorageReady, setFormError, setNotice, setRevealAnnouncement,
   })
 
   useEffect(() => {
@@ -529,39 +635,14 @@ function App() {
 
   useEffect(
     () => () => {
-      if (flipFallbackTimerRef.current !== null) {
-        window.clearTimeout(flipFallbackTimerRef.current)
+      for (const timerRef of [
+        flipFallbackTimerRef, settleTimerRef, focusTimerRef, autoFlipTimerRef,
+        crowdCheerTimerRef, outcomeCheerTimerRef, outcomeMotionTimerRef,
+        roundPreludeTimerRef, newShoeMotionTimerRef,
+      ]) {
+        if (timerRef.current !== null) window.clearTimeout(timerRef.current)
       }
-      if (settleTimerRef.current !== null) {
-        window.clearTimeout(settleTimerRef.current)
-      }
-      if (focusTimerRef.current !== null) {
-        window.clearTimeout(focusTimerRef.current)
-      }
-      if (autoFlipTimerRef.current !== null) {
-        window.clearTimeout(autoFlipTimerRef.current)
-      }
-      if (dealPhaseTimerRef.current !== null) {
-        window.clearTimeout(dealPhaseTimerRef.current)
-      }
-      if (dealGapTimerRef.current !== null) {
-        window.clearTimeout(dealGapTimerRef.current)
-      }
-      if (crowdCheerTimerRef.current !== null) {
-        window.clearTimeout(crowdCheerTimerRef.current)
-      }
-      if (outcomeCheerTimerRef.current !== null) {
-        window.clearTimeout(outcomeCheerTimerRef.current)
-      }
-      if (outcomeMotionTimerRef.current !== null) {
-        window.clearTimeout(outcomeMotionTimerRef.current)
-      }
-      if (roundPreludeTimerRef.current !== null) {
-        window.clearTimeout(roundPreludeTimerRef.current)
-      }
-      if (newShoeMotionTimerRef.current !== null) {
-        window.clearTimeout(newShoeMotionTimerRef.current)
-      }
+      clearDealTimers()
       tableLease.release()
     },
     [tableLease],
@@ -574,9 +655,14 @@ function App() {
       dealtCardIds,
       initialPointsAnnouncedRoundId,
     )
+  const displayedSettlementPresentation = displayedDurableSettlement(
+    settlementPresentation,
+    presentationPending,
+  )
+  const settlementIsDisplayed = displayedSettlementPresentation !== null
   const tableMotionPhase: TableMotionPhase = cardSweepMotion
     ? 'clearing'
-    : settlementPresentation
+    : displayedSettlementPresentation
       ? 'settling'
     : newShoeMotion
       ? 'new-shoe'
@@ -587,14 +673,19 @@ function App() {
       : pendingRound
           ? physicalDealActive ? 'dealing' : 'revealing'
           : 'betting'
-  const settledCardState =
-    cardSweepMotion?.roundId === settledCurrentRound?.id
-      ? 'sweeping'
-      : clearedRoundId === settledCurrentRound?.id
-        ? 'cleared'
-        : 'shown'
-  const { heading: settlementProcedureHeading, status: settlementProcedureStatus } =
-    settlementPresentationCopy(settlementPresentation?.state ?? null, cardSweepMotion !== null)
+  const settledCardState = durableSettledCardState(
+    cardSweepMotion?.roundId ?? null,
+    settledCurrentRound?.id ?? null,
+    presentationPending?.roundId ?? null,
+    clearedRoundId,
+  )
+  const {
+    heading: settlementProcedureHeading,
+    status: settlementProcedureStatus,
+  } = settlementPresentationCopy(
+    displayedSettlementPresentation?.state ?? null,
+    cardSweepMotion !== null,
+  )
   const tableMotionOutcome = outcomeMotion?.winner ?? null
   const ruleTraceResult = pendingRound?.result ?? settledCurrentRound
   const ruleTraceRevealedCount = pendingRound
@@ -603,8 +694,13 @@ function App() {
       ? revealOrder(ruleTraceResult).length
       : 0
   const currentShoeRecords = useMemo(
-    () => game.history.filter((record) => record.shoeId === game.shoe.id && settlementRecordIsVisible(record.id, settlementPresentation)),
-    [game.history, game.shoe.id, settlementPresentation],
+    () =>
+      visibleCurrentShoeRecords(
+        game,
+        settlementPresentation,
+        presentationPending?.roundId ?? null,
+      ),
+    [game, presentationPending, settlementPresentation],
   )
 
   const stats = useMemo(
@@ -628,12 +724,12 @@ function App() {
   } = pendingView
   const guestShoeId = pendingRound
     ? pendingRound.sourceShoeId
-    : settlementPresentation && settledCurrentRound
+    : displayedSettlementPresentation && settledCurrentRound
       ? settledCurrentRound.shoeId
       : game.shoe.id
   const guestHandNumber = pendingRound
     ? pendingRound.shoeAfter.handNumber
-    : settlementPresentation && settledCurrentRound
+    : displayedSettlementPresentation && settledCurrentRound
       ? settledCurrentRound.handNumber
       : game.shoe.handNumber + 1
   const tableGuests = useMemo(
@@ -666,7 +762,7 @@ function App() {
   )
   const guestSettlementReactions = useMemo(
     () =>
-      settlementPresentation && settledCurrentRound
+      settlementIsDisplayed && settledCurrentRound
         ? buildTableGuestSettlementReactions({
             shoeId: settledCurrentRound.shoeId,
             handNumber: settledCurrentRound.handNumber,
@@ -676,7 +772,7 @@ function App() {
             bankerPair: settledCurrentRound.bankerPair,
           })
         : [],
-    [settledCurrentRound, settlementPresentation, tableGuests],
+    [settledCurrentRound, settlementIsDisplayed, tableGuests],
   )
 
   const nextAudioEventId = (label: string) => {
@@ -809,6 +905,7 @@ function App() {
     amount = selectedChip,
     source: 'tap' | 'drag' = 'tap',
   ) => {
+    if (isDealing) return false
     setFormError(null)
     if ((target === 'player' && bets.banker > 0) || (target === 'banker' && bets.player > 0)) {
       setFormError('本模拟桌设置为不可同时下注庄与闲')
@@ -823,7 +920,7 @@ function App() {
       )
       return false
     }
-    if (totalBets(candidate) > game.balance) {
+    if (totalBets(candidate) > durableSettlement.balance) {
       setFormError('教学分余额不足')
       return false
     }
@@ -864,7 +961,8 @@ function App() {
   }
 
   const handleRepeat = () => {
-    const error = validateBets(game.lastBets, game.balance)
+    if (isDealing) return
+    const error = validateBets(game.lastBets, durableSettlement.balance)
     if (error) {
       setFormError(error)
       return
@@ -1091,6 +1189,68 @@ function App() {
     setActiveDealMotion(null)
   }
 
+  function finishDurableSettlement(roundId: string) {
+    const completion = completeDurableSettlementPresentation(
+      tableCoordinator,
+      roundId,
+    )
+    if (
+      completion.status === 'committed' ||
+      completion.status === 'already-complete'
+    ) {
+      applyCanonicalSnapshot(completion.snapshot, false)
+      setStorageReady(true)
+      setFormError(null)
+      releaseTableLease()
+      focusFirstBetZone()
+      return
+    }
+
+    if (completion.snapshot?.pending || completion.snapshot?.presentationPending) {
+      applyCanonicalSnapshot(completion.snapshot, false)
+    } else {
+      settlementIntegrityFailureRoundIdRef.current = roundId
+      setStorageReady(false)
+      roundReadyRef.current = false
+      roundLockRef.current = flipLockRef.current = settlementLockRef.current = true
+      setRoundReady(false)
+    }
+    releaseTableLease()
+    setFormError('收牌已完成，但结算流程标记未能安全清除。')
+    setNotice('牌桌保持停止下注；刷新后会从权威结算状态继续。')
+  }
+
+  function beginDurableSettlement(
+    record: RoundRecord,
+    ledger: WagerChipLedger,
+  ) {
+    settlementLockRef.current = true
+    setPresentationPending({ type: 'settlement', roundId: record.id })
+    setBets({ ...EMPTY_BETS })
+    setSelectedChip(100)
+    setFormError(null)
+    setDetailView(null)
+    clearVisualWagers()
+    const started = startDurableSettlementPresentation({
+      record,
+      wagerChipLedger: ledger,
+      profile: effectiveMotionProfile,
+      startPresentation: startSettlementPresentation,
+      onComplete: () => finishDurableSettlement(record.id),
+      setMotion: setSettlementMotion,
+      setWagerLedger: setSettlementWagerChipLedger,
+      setOutcome: setOutcomeMotion,
+      outcomeTimerRef: outcomeMotionTimerRef,
+      scaleDuration: scaledMotionDuration,
+      announce: setRevealAnnouncement,
+    })
+    if (started) return
+
+    cancelPresentation()
+    releaseTableLease()
+    setNotice('本局已安全结算，但呈现流程未能启动；刷新后将继续。')
+  }
+
   const finalizeRound = (roundId: string) => {
     const current = pendingRoundRef.current
     if (
@@ -1119,17 +1279,15 @@ function App() {
       !pendingRoundMatchesGame(canonical.snapshot.game, canonicalPending) ||
       !pendingRoundsMatch(current, canonicalPending)
     ) {
-      gameRef.current = canonical.snapshot.game
-      setGame(canonical.snapshot.game)
       const alreadySettled = canonical.snapshot.game.history.some(
         (item) => item.id === current.id,
       )
+      adoptCanonicalWhileHoldingLease(canonical.snapshot)
       setNotice(
         alreadySettled
           ? '本局已由另一标签页完成，当前牌桌已同步。'
           : '权威牌桌快照与当前牌局不一致，本局已停止且未扣除教学分。',
       )
-      releasePendingRound()
       return
     }
 
@@ -1139,6 +1297,8 @@ function App() {
         {
           game: canonical.snapshot.game,
           pending: canonicalPending,
+          presentationPending:
+            canonical.snapshot.presentationPending ?? null,
         },
         { roundId: current.id, settledAt: new Date().toISOString() },
       )
@@ -1156,9 +1316,9 @@ function App() {
     )
     if (committed.status !== 'committed') {
       if (committed.status === 'conflict' && committed.current) {
-        tableVersionRef.current = tableVersionOf(committed.current)
-        gameRef.current = committed.current.game
-        setGame(committed.current.game)
+        adoptCanonicalWhileHoldingLease(committed.current)
+      } else {
+        releasePendingRound()
       }
       setRevealAnnouncement(
         committed.status === 'conflict'
@@ -1170,7 +1330,6 @@ function App() {
           ? '结算 CAS 冲突：已保留权威版本。'
           : '持久化写入失败：本局未结算，刷新可恢复安全进度。',
       )
-      releasePendingRound()
       return
     }
 
@@ -1181,97 +1340,22 @@ function App() {
         ? buildSettlementCheer({
             winner: current.result.winner,
             settlementNet: settlement.net,
-            manualSides: manualRevealSides(current.bets, current.playMode, current.revealControl),
+            manualSides: manualRevealSides(
+              current.bets,
+              current.playMode,
+              current.revealControl,
+            ),
           })
         : null
     const nextGame = committed.snapshot.game
-    const shouldAnimateSettlement =
-      current.playMode === 'bet' && settlement.totalStake > 0
-    if (shouldAnimateSettlement) {
-      setSettlementWagerChipLedger(wagerChipLedgerRef.current)
-    } else {
-      setSettlementWagerChipLedger(null)
-    }
+    const settlementLedger = wagerChipLedgerRef.current
     tableVersionRef.current = tableVersionOf(committed.snapshot)
     gameRef.current = nextGame
     setGame(nextGame)
-    setBets({ ...EMPTY_BETS })
-    setSelectedChip(100)
-    setFormError(null)
-    setDetailView(null)
-    clearVisualWagers()
-    setOutcomeMotion({
-      id: current.id,
-      winner: current.result.winner,
-    })
-    if (outcomeMotionTimerRef.current !== null) {
-      window.clearTimeout(outcomeMotionTimerRef.current)
-    }
-    outcomeMotionTimerRef.current = window.setTimeout(
-      () => {
-        outcomeMotionTimerRef.current = null
-        setOutcomeMotion(null)
-      },
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-        ? 30
-        : scaledMotionDuration(OUTCOME_MOTION_MS, 30),
-    )
-    settlementLockRef.current = true
-    if (shouldAnimateSettlement) {
-      setSettlementMotion({
-        id: current.id,
-        net: settlement.net,
-        bets: { ...current.bets },
-        returns: { ...settlement.breakdown },
-        wagerChipLedger: wagerChipLedgerRef.current,
-      })
-    }
-    casinoAudio.playSettlement(
-      `${current.id}:settlement`,
-      current.result.winner,
-      settlement.net,
-      current.playMode === 'fly',
-    )
-    const resultCall = casinoAudio.playDealerCall(
-      `${current.id}:dealer-call:result`,
-      finalResultCall(current.result),
-    )
-    setRevealAnnouncement(
-      `本局${outcomeLabel(current.result.winner)}，净输赢${
-        settlement.net > 0 ? `正 ${formatNumber(settlement.net)}` : formatNumber(settlement.net)
-      } 教学分。`,
-    )
     // The durable settle commit precedes every balance, road and animation
     // update. Keep the Web Lock through the final discard-tray sweep.
     releasePendingRound(false)
-    const presentationStarted = startSettlementPresentation({
-      roundId: current.id,
-      cardIds: current.result.dealOrder.map((card) => card.id),
-      profile: effectiveMotionProfile,
-      awaitDealerSettlement: shouldAnimateSettlement,
-      startAfter: resultCall,
-      onComplete: () => {
-        settlementLockRef.current = false
-        setSettlementMotion(null)
-        setSettlementWagerChipLedger(null)
-        releaseTableLease()
-        window.requestAnimationFrame(() => {
-          if (!document.querySelector('[role="dialog"]')) {
-            document
-              .querySelector<HTMLButtonElement>('.bet-zone:not(:disabled)')
-              ?.focus({ preventScroll: true })
-          }
-        })
-      },
-    })
-    if (!presentationStarted) {
-      casinoAudio.cancelDealerCalls()
-      settlementLockRef.current = false
-      setSettlementMotion(null)
-      setSettlementWagerChipLedger(null)
-      releaseTableLease()
-      setNotice('牌桌呈现仍在清理中；本局耐久结算已安全完成。')
-    }
+    beginDurableSettlement(record, settlementLedger)
     if (settlementCheer) {
       if (outcomeCheerTimerRef.current !== null) {
         window.clearTimeout(outcomeCheerTimerRef.current)
@@ -1318,12 +1402,11 @@ function App() {
         !pendingRoundsMatch(intent.pending, savedPending)
       ) {
         if (canonical.status === 'ok') {
-          tableVersionRef.current = tableVersionOf(canonical.snapshot)
-          gameRef.current = canonical.snapshot.game
-          setGame(canonical.snapshot.game)
+          adoptCanonicalWhileHoldingLease(canonical.snapshot)
+        } else {
+          roundLockRef.current = false
+          releaseTableLease()
         }
-        roundLockRef.current = false
-        releaseTableLease()
         setFormError('已锁定牌局的权威快照发生变化，请重新确认下注。')
         setNotice('牌桌已停止在最新耐久版本；没有重复扣除教学分。')
         return
@@ -1332,6 +1415,7 @@ function App() {
       tableVersionRef.current = tableVersionOf(canonical.snapshot)
       gameRef.current = canonical.snapshot.game
       setGame(canonical.snapshot.game)
+      setPresentationPending(null)
       const pending = pendingRoundFromPersisted(savedPending)
       pendingRoundRef.current = pending
       revealedCountRef.current = 0
@@ -1448,9 +1532,7 @@ function App() {
         pendingRoundsMatch(motion.roundIntent.pending, canonicalPending)
 
       if (!automaticSnapshotIsIntact) {
-        roundPreludeRef.current = null
-        roundLockRef.current = false
-        releaseTableLease()
+        adoptCanonicalWhileHoldingLease(canonical.snapshot)
         setFormError('自动换靴后的权威牌局快照不完整，本局没有开始。')
         setRevealAnnouncement(
           '新牌靴快照校验失败；页面没有推进余额或牌面。',
@@ -1468,12 +1550,11 @@ function App() {
 
     if (
       canonical.snapshot.pending !== null ||
+      canonical.snapshot.presentationPending ||
       canonical.snapshot.game.shoe.id !== motion.shoe.id ||
       canonical.snapshot.game.shoe.cursor !== motion.shoe.cursor
     ) {
-      roundPreludeRef.current = null
-      roundLockRef.current = false
-      releaseTableLease()
+      adoptCanonicalWhileHoldingLease(canonical.snapshot)
       setFormError('另一标签页已更新牌桌，新牌靴展示已安全停止。')
       setNotice('牌桌已同步到最新权威版本。')
       return
@@ -1569,18 +1650,15 @@ function App() {
     const knownVersion = tableVersionRef.current
     if (
       canonical.snapshot.pending ||
+      canonical.snapshot.presentationPending ||
       (knownVersion !== null &&
         (knownVersion.revision !== canonicalVersion.revision ||
           knownVersion.commitId !== canonicalVersion.commitId))
     ) {
-      tableVersionRef.current = canonicalVersion
-      gameRef.current = canonical.snapshot.game
-      setGame(canonical.snapshot.game)
-      roundLockRef.current = false
-      releaseTableLease()
+      adoptCanonicalWhileHoldingLease(canonical.snapshot)
       setFormError(
-        canonical.snapshot.pending
-          ? '另一标签页正在进行牌局，请完成后再试。'
+        canonical.snapshot.pending || canonical.snapshot.presentationPending
+          ? '权威牌桌仍在进行牌局或结算，请完成后再试。'
           : '牌桌已推进到新版本，请在最新牌面上重新确认下注。',
       )
       return
@@ -1591,11 +1669,7 @@ function App() {
         ? validateBets(roundBets, canonical.snapshot.game.balance)
         : null
     if (canonicalBetError) {
-      tableVersionRef.current = canonicalVersion
-      gameRef.current = canonical.snapshot.game
-      setGame(canonical.snapshot.game)
-      roundLockRef.current = false
-      releaseTableLease()
+      adoptCanonicalWhileHoldingLease(canonical.snapshot)
       setFormError(canonicalBetError)
       return
     }
@@ -1604,6 +1678,7 @@ function App() {
     let preparedState: TableCoreState = {
       game: canonical.snapshot.game,
       pending: canonical.snapshot.pending,
+      presentationPending: canonical.snapshot.presentationPending ?? null,
     }
     try {
       if (preparedState.game.shoe.needsShuffle) {
@@ -1632,12 +1707,11 @@ function App() {
     )
     if (committed.status !== 'committed' || !committed.snapshot.pending) {
       if (committed.status === 'conflict' && committed.current) {
-        tableVersionRef.current = tableVersionOf(committed.current)
-        gameRef.current = committed.current.game
-        setGame(committed.current.game)
+        adoptCanonicalWhileHoldingLease(committed.current)
+      } else {
+        roundLockRef.current = false
+        releaseTableLease()
       }
-      roundLockRef.current = false
-      releaseTableLease()
       setFormError(
         committed.status === 'conflict'
           ? '另一标签页已推进牌桌，请在最新版本上重新确认下注。'
@@ -1722,14 +1796,11 @@ function App() {
         return
       }
 
-      tableVersionRef.current = tableVersionOf(canonical.snapshot)
-      gameRef.current = canonical.snapshot.game
-      setGame(canonical.snapshot.game)
+      adoptCanonicalWhileHoldingLease(canonical.snapshot)
       setRevealAnnouncement(
         '当前牌面与权威快照不一致；为避免重复翻牌或结算，页面已停止该局。',
       )
       setNotice('牌局版本发生冲突，未扣除教学分。刷新后可读取最新安全进度。')
-      releasePendingRound()
       return
     }
 
@@ -1739,6 +1810,8 @@ function App() {
         {
           game: canonical.snapshot.game,
           pending: canonical.snapshot.pending,
+          presentationPending:
+            canonical.snapshot.presentationPending ?? null,
         },
         { roundId, nextRevealedCount: nextCount },
       )
@@ -1764,13 +1837,12 @@ function App() {
       setRevealActor(null)
       if (committed.status === 'conflict') {
         if (committed.current) {
-          tableVersionRef.current = tableVersionOf(committed.current)
-          gameRef.current = committed.current.game
-          setGame(committed.current.game)
+          adoptCanonicalWhileHoldingLease(committed.current)
+        } else {
+          releasePendingRound()
         }
         setRevealAnnouncement('翻牌 CAS 冲突，当前页面已停止推进。')
         setNotice('没有重复翻牌或结算；请刷新读取权威进度。')
-        releasePendingRound()
       } else {
         flipLockRef.current = false
         roundReadyRef.current = true
@@ -2073,7 +2145,8 @@ function App() {
   ])
 
   const handleDeal = () => {
-    const error = validateBets(bets, game.balance)
+    if (isDealing) return
+    const error = validateBets(bets, durableSettlement.balance)
     if (error) {
       setFormError(error)
       return
@@ -2134,17 +2207,20 @@ function App() {
       return
     }
     const canonical = tableCoordinator.read()
-    if (canonical.status !== 'ok' || canonical.snapshot.pending) {
+    if (
+      canonical.status !== 'ok' ||
+      canonical.snapshot.pending ||
+      canonical.snapshot.presentationPending
+    ) {
       if (canonical.status === 'ok') {
-        tableVersionRef.current = tableVersionOf(canonical.snapshot)
-        gameRef.current = canonical.snapshot.game
-        setGame(canonical.snapshot.game)
+        adoptCanonicalWhileHoldingLease(canonical.snapshot)
+      } else {
+        roundLockRef.current = false
+        releaseTableLease()
       }
-      roundLockRef.current = false
-      releaseTableLease()
       setFormError(
         canonical.status === 'ok'
-          ? '权威牌桌仍有未完成牌局，无法更换牌靴。'
+          ? '权威牌桌仍有未完成牌局或结算，无法更换牌靴。'
           : '无法读取权威牌桌快照，未更换牌靴。',
       )
       return
@@ -2154,7 +2230,12 @@ function App() {
     let nextState
     try {
       nextState = replaceShoeState(
-        { game: canonical.snapshot.game, pending: null },
+        {
+          game: canonical.snapshot.game,
+          pending: null,
+          presentationPending:
+            canonical.snapshot.presentationPending ?? null,
+        },
         { shoe: preparedShoe },
       )
     } catch {
@@ -2170,12 +2251,11 @@ function App() {
     )
     if (committed.status !== 'committed') {
       if (committed.status === 'conflict' && committed.current) {
-        tableVersionRef.current = tableVersionOf(committed.current)
-        gameRef.current = committed.current.game
-        setGame(committed.current.game)
+        adoptCanonicalWhileHoldingLease(committed.current)
+      } else {
+        roundLockRef.current = false
+        releaseTableLease()
       }
-      roundLockRef.current = false
-      releaseTableLease()
       setFormError(
         committed.status === 'conflict'
           ? '另一标签页已推进牌桌，新牌靴操作已取消。'
@@ -2219,18 +2299,21 @@ function App() {
       return
     }
     const canonical = tableCoordinator.read()
-    if (canonical.status !== 'ok' || canonical.snapshot.pending) {
+    if (
+      canonical.status !== 'ok' ||
+      canonical.snapshot.pending ||
+      canonical.snapshot.presentationPending
+    ) {
       if (canonical.status === 'ok') {
-        tableVersionRef.current = tableVersionOf(canonical.snapshot)
-        gameRef.current = canonical.snapshot.game
-        setGame(canonical.snapshot.game)
+        adoptCanonicalWhileHoldingLease(canonical.snapshot)
+      } else {
+        roundLockRef.current = false
+        releaseTableLease()
       }
-      roundLockRef.current = false
-      releaseTableLease()
       setResetOpen(false)
       setFormError(
         canonical.status === 'ok'
-          ? '权威牌桌仍有未完成牌局，无法重置。'
+          ? '权威牌桌仍有未完成牌局或结算，无法重置。'
           : '无法读取权威牌桌快照，未重置任何数据。',
       )
       return
@@ -2239,7 +2322,12 @@ function App() {
     let resetState
     try {
       resetState = resetTableState(
-        { game: canonical.snapshot.game, pending: null },
+        {
+          game: canonical.snapshot.game,
+          pending: null,
+          presentationPending:
+            canonical.snapshot.presentationPending ?? null,
+        },
         {
           shoe: createShoe(),
           balance: STARTING_BALANCE,
@@ -2260,12 +2348,11 @@ function App() {
     )
     if (committed.status !== 'committed') {
       if (committed.status === 'conflict' && committed.current) {
-        tableVersionRef.current = tableVersionOf(committed.current)
-        gameRef.current = committed.current.game
-        setGame(committed.current.game)
+        adoptCanonicalWhileHoldingLease(committed.current)
+      } else {
+        roundLockRef.current = false
+        releaseTableLease()
       }
-      roundLockRef.current = false
-      releaseTableLease()
       setResetOpen(false)
       setFormError(
         committed.status === 'conflict'
@@ -2292,29 +2379,8 @@ function App() {
     releaseTableLease()
   }
 
-  const exportCsv = () => {
-    downloadTextFile(
-      `baccarat-history-${new Date().toISOString().slice(0, 10)}.csv`,
-      `\uFEFF${historyToCsv(game.history)}`,
-      'text/csv;charset=utf-8',
-    )
-  }
-
-  const exportJson = () => {
-    downloadTextFile(
-      `baccarat-history-${new Date().toISOString().slice(0, 10)}.json`,
-      JSON.stringify(
-        {
-          exportedAt: new Date().toISOString(),
-          rulesetVersion: RULESET_VERSION,
-          history: game.history,
-        },
-        null,
-        2,
-      ),
-      'application/json;charset=utf-8',
-    )
-  }
+  const exportCsv = () => downloadHistoryCsv(durableSettlement.history)
+  const exportJson = () => downloadHistoryJson(durableSettlement.history)
 
   const openDetailView = (view: Exclude<DetailView, null>) => {
     setDetailView(view)
@@ -2436,7 +2502,7 @@ function App() {
               } ${physicalDealActive ? 'is-dealing-cards' : ''} ${
                 activeDealMotion ? 'is-dealing-card' : ''
               } ${roundRequesting || isLockingBets ? 'is-locking-bets' : ''} ${
-                settlementPresentation ? 'is-settling-table' : ''
+                displayedSettlementPresentation ? 'is-settling-table' : ''
               } ${cardSweepMotion ? 'is-clearing-cards' : ''
               } ${newShoeMotion ? 'is-new-shoe' : ''} ${
                 flippingCardId && revealActor === 'dealer'
@@ -2580,7 +2646,7 @@ function App() {
                 records={currentShoeRecords}
               />
 
-              {settlementPresentation && settledCurrentRound ? (
+              {displayedSettlementPresentation && settledCurrentRound ? (
                 <TableGuests
                   guests={tableGuests}
                   phase="settled"
@@ -2658,7 +2724,7 @@ function App() {
               <TableDealerProcedure
                 pendingRound={pendingRound} roundPrelude={roundPrelude}
                 settledRound={settledCurrentRound}
-                settlementPresentation={settlementPresentation}
+                settlementPresentation={displayedSettlementPresentation}
                 revealedCount={revealedCount} dealtCardIds={dealtCardIds}
                 roundReady={roundReady} roundRequesting={roundRequesting}
                 initialPointsAnnouncedRoundId={initialPointsAnnouncedRoundId}
@@ -2670,10 +2736,10 @@ function App() {
               <BettingPanel
                 bets={displayedBets}
                 wagerChipLedger={displayedWagerChipLedger}
-                balance={game.balance}
+                balance={durableSettlement.balance}
                 selectedChip={selectedChip}
                 isDealing={isDealing}
-                isSettling={settlementPresentation !== null}
+                isSettling={displayedSettlementPresentation !== null}
                 dealingMode={dealingMode}
                 revealControl={displayedRevealControl}
                 canSqueeze={displayedCanSqueeze}
@@ -2683,6 +2749,7 @@ function App() {
                 onAddBet={handleAddBet}
                 onRemoveLastBet={handleRemoveLastBet}
                 onClear={() => {
+                  if (isDealing) return
                   setBets({ ...EMPTY_BETS })
                   clearVisualWagers()
                   setFormError(null)
@@ -2746,7 +2813,7 @@ function App() {
 
         {detailView === 'history' && (
           <HistoryTable
-            history={game.history}
+            history={durableSettlement.history}
             onExportCsv={exportCsv}
             onExportJson={exportJson}
           />
@@ -2756,9 +2823,9 @@ function App() {
 
         <LeaderboardPanel
           active={detailView === 'leaderboard'}
-          currentBalance={game.balance}
+          currentBalance={durableSettlement.balance}
           recordedHighestBalance={recordedLeaderboardHigh}
-          scoreEventId={game.history.at(-1)?.id ?? null}
+          scoreEventId={durableSettlement.history.at(-1)?.id ?? null}
         />
 
         <section className="simulator-disclosure">

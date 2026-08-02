@@ -1,14 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  PersistedGameState,
-  PersistedPendingRound,
-} from '../types'
+import type { PersistedGameState, PersistedPendingRound } from '../types'
 import {
   EMPTY_BETS,
   createSeededRandomInt,
   createShoe,
   dealRound,
 } from './baccarat'
+import { settleRoundState } from './tableEngine'
 import {
   LEGACY_GAME_STORAGE_KEY,
   LEGACY_PENDING_STORAGE_KEY,
@@ -19,10 +17,7 @@ import {
   readTableEnvelope,
   readLegacyTableState,
 } from './tableStorage'
-import type {
-  PersistedTableEnvelopeV2,
-  TableCoreState,
-} from './tableState'
+import type { PersistedTableEnvelopeV2, TableCoreState } from './tableState'
 import { tableVersionOf } from './tableState'
 
 const TEST_TIME = '2026-08-01T12:00:00.000Z'
@@ -40,7 +35,10 @@ function createLocalStorageHarness() {
   return { values, getItem, setItem, removeItem }
 }
 
-function fixture(seed = 20260801, shoeId = 'S-TABLE-V2'): {
+function fixture(
+  seed = 20260801,
+  shoeId = 'S-TABLE-V2',
+): {
   game: PersistedGameState
   pending: PersistedPendingRound
 } {
@@ -86,6 +84,20 @@ function envelope(
   }
 }
 
+function settledCore(): TableCoreState {
+  const { game, pending } = fixture()
+  return settleRoundState(
+    {
+      game,
+      pending: {
+        ...pending,
+        revealedCount: pending.result.dealOrder.length,
+      },
+    },
+    { roundId: pending.id, settledAt: TEST_TIME },
+  ).state
+}
+
 let storage: ReturnType<typeof createLocalStorageHarness>
 
 beforeEach(() => {
@@ -111,13 +123,56 @@ describe('v2 envelope validation and reads', () => {
     const { game, pending } = fixture()
     const valid = envelope({ game, pending })
     expect(isPersistedTableEnvelopeV2(valid)).toBe(true)
-    expect(
-      isPersistedTableEnvelopeV2({ ...valid, unexpected: true }),
-    ).toBe(false)
+    expect(isPersistedTableEnvelopeV2({ ...valid, unexpected: true })).toBe(
+      false,
+    )
 
     const otherPending = fixture(20260802, 'S-OTHER').pending
     expect(
       isPersistedTableEnvelopeV2({ ...valid, pending: otherPending }),
+    ).toBe(false)
+  })
+
+  it('reads legacy envelopes without a marker and validates new marker invariants', () => {
+    const { game } = fixture()
+    const legacyEnvelope = envelope({ game, pending: null })
+    expect(Object.hasOwn(legacyEnvelope, 'presentationPending')).toBe(false)
+    expect(isPersistedTableEnvelopeV2(legacyEnvelope)).toBe(true)
+
+    const settled = settledCore()
+    const valid = envelope(settled)
+    expect(isPersistedTableEnvelopeV2(valid)).toBe(true)
+    expect(
+      isPersistedTableEnvelopeV2({
+        ...valid,
+        presentationPending: {
+          type: 'settlement',
+          roundId: 'not-the-latest-round',
+        },
+      }),
+    ).toBe(false)
+    expect(
+      isPersistedTableEnvelopeV2({
+        ...valid,
+        presentationPending: {
+          type: 'settlement',
+          roundId: settled.game.history.at(-1)?.id,
+          extra: true,
+        },
+      }),
+    ).toBe(false)
+
+    const { pending } = fixture()
+    expect(
+      isPersistedTableEnvelopeV2({
+        ...valid,
+        game,
+        pending,
+        presentationPending: {
+          type: 'settlement',
+          roundId: pending.id,
+        },
+      }),
     ).toBe(false)
   })
 
@@ -151,6 +206,7 @@ describe('legacy v1 migration', () => {
     expect(result.snapshot.revision).toBe(1)
     expect(result.snapshot.lastMutation).toBe('migrate-v1')
     expect(result.snapshot.pending?.revealedCount).toBe(2)
+    expect(result.snapshot.presentationPending).toBeNull()
     expect(result.legacyCleanupComplete).toBe(true)
     expect(storage.values.has(LEGACY_GAME_STORAGE_KEY)).toBe(false)
     expect(storage.values.has(LEGACY_PENDING_STORAGE_KEY)).toBe(false)
@@ -173,6 +229,7 @@ describe('legacy v1 migration', () => {
     expect(result.status).toBe('migrated')
     if (result.status === 'migrated') {
       expect(result.snapshot.pending).toBeNull()
+      expect(result.snapshot.presentationPending).toBeNull()
       expect(result.warning).toBeUndefined()
     }
   })
@@ -181,10 +238,7 @@ describe('legacy v1 migration', () => {
     const { game } = fixture()
     const stalePending = fixture(20260802, 'S-STALE').pending
     storage.values.set(LEGACY_GAME_STORAGE_KEY, JSON.stringify(game))
-    storage.values.set(
-      LEGACY_PENDING_STORAGE_KEY,
-      JSON.stringify(stalePending),
-    )
+    storage.values.set(LEGACY_PENDING_STORAGE_KEY, JSON.stringify(stalePending))
 
     const legacy = readLegacyTableState()
 
@@ -289,6 +343,50 @@ describe('revision and commitId compare-write-read transactions', () => {
     expect(committed.status).toBe('committed')
     if (committed.status === 'committed') {
       expect(committed.snapshot.revision).toBe(1)
+      expect(committed.snapshot.presentationPending).toBeNull()
+      expect(Object.hasOwn(committed.snapshot, 'presentationPending')).toBe(
+        true,
+      )
+    }
+  })
+
+  it('persists and clears a settlement marker through revisioned commits', () => {
+    const { game } = fixture()
+    const initial = envelope({ game, pending: null })
+    storage.values.set(TABLE_STORAGE_KEY, JSON.stringify(initial))
+    const settled = settledCore()
+
+    const settlementCommit = commitTableEnvelope({
+      expectedVersion: tableVersionOf(initial),
+      next: settled,
+      writerId: 'tab-a',
+      mutation: 'settle-round',
+      commitId: 'commit-settlement',
+      updatedAt: TEST_TIME,
+    })
+    expect(settlementCommit.status).toBe('committed')
+    if (settlementCommit.status !== 'committed') return
+    expect(settlementCommit.snapshot.presentationPending).toEqual(
+      settled.presentationPending,
+    )
+
+    const completed = commitTableEnvelope({
+      expectedVersion: tableVersionOf(settlementCommit.snapshot),
+      next: {
+        game: settlementCommit.snapshot.game,
+        pending: null,
+        presentationPending: null,
+      },
+      writerId: 'tab-a',
+      mutation: 'complete-presentation',
+      commitId: 'commit-presentation-complete',
+      updatedAt: TEST_TIME,
+    })
+    expect(completed.status).toBe('committed')
+    if (completed.status === 'committed') {
+      expect(completed.snapshot.revision).toBe(initial.revision + 2)
+      expect(completed.snapshot.lastMutation).toBe('complete-presentation')
+      expect(completed.snapshot.presentationPending).toBeNull()
     }
   })
 
@@ -323,9 +421,7 @@ describe('revision and commitId compare-write-read transactions', () => {
       status: 'conflict',
       current: committed.snapshot,
     })
-    expect(storage.values.get(TABLE_STORAGE_KEY)).toBe(
-      durableBeforeStaleWrite,
-    )
+    expect(storage.values.get(TABLE_STORAGE_KEY)).toBe(durableBeforeStaleWrite)
   })
 
   it('reports not-written and preserves the previous envelope when setItem throws', () => {

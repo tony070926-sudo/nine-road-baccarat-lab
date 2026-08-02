@@ -142,7 +142,10 @@ export function startTableRestoreLoop(
         notice: '旧版未完成牌局无法安全恢复，已保留余额、牌靴与历史记录。',
       })
     }
-    if (!bootstrap.snapshot.pending) {
+    if (
+      !bootstrap.snapshot.pending &&
+      !bootstrap.snapshot.presentationPending
+    ) {
       input.updateUi({ announcement: '请先选择下注对象与筹码，然后确认开牌。' })
       input.releaseLease()
     }
@@ -171,7 +174,11 @@ export function startTableRestoreLoop(
     input.releaseLease()
     input.applySnapshot(snapshot, false)
     input.updateUi({ storageReady: true })
-    if (snapshot.pending && leaseSupported()) scheduleRetry()
+    if (
+      (snapshot.pending || snapshot.presentationPending) &&
+      leaseSupported()
+    )
+      scheduleRetry()
   })
   void restoreOrBootstrap()
 

@@ -201,6 +201,40 @@ describe('TableCoordinator', () => {
     coordinator.dispose()
   })
 
+  it('does not replay a delayed hint for an independently adopted snapshot', () => {
+    const messaging = installMessagingHarness()
+    const coordinator = new TableCoordinator('tab-a')
+    coordinator.start()
+    const ready = coordinator.bootstrap(() => createGame())
+    expect(ready.status).toBe('ready')
+    if (ready.status !== 'ready') return
+    const remote = commitTableEnvelope({
+      expectedVersion: tableVersionOf(ready.snapshot),
+      next: { game: ready.snapshot.game, pending: null },
+      writerId: 'tab-b',
+      mutation: 'reset',
+    })
+    expect(remote.status).toBe('committed')
+    if (remote.status !== 'committed') return
+
+    const revisions: number[] = []
+    coordinator.subscribe((snapshot) => revisions.push(snapshot.revision))
+    coordinator.adopt(remote.snapshot)
+    messaging.listeners.message?.(
+      new MessageEvent('message', {
+        data: {
+          type: 'table-commit',
+          schemaVersion: 2,
+          revision: remote.snapshot.revision,
+          commitId: remote.snapshot.commitId,
+          writerId: 'tab-b',
+        },
+      }),
+    )
+    expect(revisions).toEqual([])
+    coordinator.dispose()
+  })
+
   it('uses storage events as revision hints and ignores malformed payloads', () => {
     const messaging = installMessagingHarness()
     const coordinator = new TableCoordinator('tab-a')

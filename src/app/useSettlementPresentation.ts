@@ -33,10 +33,44 @@ interface ActiveSettlementPresentation {
   onComplete: () => void
 }
 
-interface StartSettlementPresentationInput
+export interface StartSettlementPresentationInput
   extends Omit<ActiveSettlementPresentation, 'state'> {
   awaitDealerSettlement: boolean
   startAfter: Promise<unknown>
+}
+
+interface MutableValue<T> {
+  current: T
+}
+
+interface CancelSettlementPresentationRuntimeInput<T> {
+  activeRef: MutableValue<T | null>
+  timerRef: MutableValue<number | null>
+  clearTimeout: (timerId: number) => void
+  clearCardSweepMotion: () => void
+  clearPresentation: () => void
+  clearReadyRound: () => void
+}
+
+// Exported for the DOM-free unit harness. The production hook uses the same
+// primitive so an authoritative external snapshot can invalidate every local
+// continuation without accidentally completing the interrupted presentation.
+export function cancelSettlementPresentationRuntime<T>({
+  activeRef,
+  timerRef,
+  clearTimeout,
+  clearCardSweepMotion,
+  clearPresentation,
+  clearReadyRound,
+}: CancelSettlementPresentationRuntimeInput<T>): void {
+  if (timerRef.current !== null) {
+    clearTimeout(timerRef.current)
+    timerRef.current = null
+  }
+  activeRef.current = null
+  clearCardSweepMotion()
+  clearPresentation()
+  clearReadyRound()
 }
 
 export function settlementPresentationHold(
@@ -104,13 +138,16 @@ const PRESENTATION_STATE_RANK: Readonly<
 export function settlementRecordIsVisible(
   roundId: string,
   presentation: SettlementPresentation | null,
+  durablePresentationRoundId?: string | null,
 ): boolean {
-  return (
-    !presentation ||
-    presentation.roundId !== roundId ||
-    PRESENTATION_STATE_RANK[presentation.state] >=
+  if (presentation?.roundId === roundId) {
+    return (
+      PRESENTATION_STATE_RANK[presentation.state] >=
       PRESENTATION_STATE_RANK['recording-road']
-  )
+    )
+  }
+
+  return durablePresentationRoundId !== roundId
 }
 
 /**
@@ -131,6 +168,17 @@ export function useSettlementPresentation(latestRoundId: string | null) {
     if (timerRef.current === null) return
     window.clearTimeout(timerRef.current)
     timerRef.current = null
+  }, [])
+
+  const cancelPresentation = useCallback(() => {
+    cancelSettlementPresentationRuntime({
+      activeRef,
+      timerRef,
+      clearTimeout: (timerId) => window.clearTimeout(timerId),
+      clearCardSweepMotion: () => setCardSweepMotion(null),
+      clearPresentation: () => setPresentation(null),
+      clearReadyRound: () => setReadyRoundId(null),
+    })
   }, [])
 
   const advancePresentation = useCallback(
@@ -230,6 +278,7 @@ export function useSettlementPresentation(latestRoundId: string | null) {
       }
       activeRef.current = active
       setCardSweepMotion(null)
+      setClearedRoundId((current) => (current === roundId ? null : current))
       setReadyRoundId(null)
       setPresentation({ roundId, state: 'not-started' })
       const beginPhysicalSettlement = () => {
@@ -278,6 +327,7 @@ export function useSettlementPresentation(latestRoundId: string | null) {
     cardSweepMotion,
     clearedRoundId,
     readyRoundId,
+    cancelPresentation,
     startSettlementPresentation,
     handleDealerSettlementStep,
     handleDealerSettlementComplete,

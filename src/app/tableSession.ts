@@ -1,10 +1,11 @@
 import { EMPTY_BETS, createShoe } from '../game/baccarat'
 import { resolveRevealControl } from '../game/reveal'
-import { tableVersionOf, type TableVersion } from '../game/tableState'
 import {
-  readLegacyTableState,
-  readTableEnvelope,
-} from '../game/tableStorage'
+  tableVersionOf,
+  type PersistedSettlementPresentationPending,
+  type TableVersion,
+} from '../game/tableState'
+import { readLegacyTableState, readTableEnvelope } from '../game/tableStorage'
 import type {
   PendingRound,
   PersistedGameState,
@@ -15,6 +16,7 @@ import { STARTING_BALANCE } from './tableConfig'
 export interface InitialTableSession {
   game: PersistedGameState
   pendingRound: PendingRound | null
+  presentationPending: PersistedSettlementPresentationPending | null
   revealedCount: number
   tableVersion: TableVersion | null
   storageFault: boolean
@@ -55,6 +57,7 @@ export function loadInitialSession(): InitialTableSession {
       pendingRound: v2.snapshot.pending
         ? pendingRoundFromPersisted(v2.snapshot.pending)
         : null,
+      presentationPending: v2.snapshot.presentationPending ?? null,
       revealedCount: v2.snapshot.pending?.revealedCount ?? 0,
       tableVersion: tableVersionOf(v2.snapshot),
       storageFault: false,
@@ -65,6 +68,7 @@ export function loadInitialSession(): InitialTableSession {
     return {
       game: makeInitialState(),
       pendingRound: null,
+      presentationPending: null,
       revealedCount: 0,
       tableVersion: null,
       storageFault: true,
@@ -78,6 +82,7 @@ export function loadInitialSession(): InitialTableSession {
       pendingRound: legacy.core.pending
         ? pendingRoundFromPersisted(legacy.core.pending)
         : null,
+      presentationPending: null,
       revealedCount: legacy.core.pending?.revealedCount ?? 0,
       tableVersion: null,
       storageFault: false,
@@ -87,6 +92,7 @@ export function loadInitialSession(): InitialTableSession {
   return {
     game: makeInitialState(),
     pendingRound: null,
+    presentationPending: null,
     revealedCount: 0,
     tableVersion: null,
     storageFault:

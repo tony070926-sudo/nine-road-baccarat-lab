@@ -153,6 +153,11 @@ export class TableCoordinator {
     return result
   }
 
+  /** Marks an independently reread canonical snapshot as already adopted. */
+  adopt(snapshot: PersistedTableEnvelopeV2): void {
+    this.acceptLocalSnapshot(snapshot, false)
+  }
+
   private acceptLocalSnapshot(
     snapshot: PersistedTableEnvelopeV2,
     announce: boolean,

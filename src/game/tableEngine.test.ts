@@ -10,6 +10,7 @@ import {
 import {
   TableEngineError,
   advanceRevealState,
+  completeSettlementPresentationState,
   deriveTablePhase,
   prepareRoundState,
   replaceShoeState,
@@ -83,10 +84,15 @@ describe('tableEngine', () => {
     const betting = initialState()
     const revealing = preparedState(betting)
     const ready = fullyReveal(revealing)
+    const settling = settleRoundState(ready, {
+      roundId: 'round-engine-1',
+      settledAt: '2026-08-01T00:01:00.000Z',
+    }).state
 
     expect(deriveTablePhase(betting)).toBe('betting')
     expect(deriveTablePhase(revealing)).toBe('revealing')
     expect(deriveTablePhase(ready)).toBe('ready-to-settle')
+    expect(deriveTablePhase(settling)).toBe('settling')
   })
 
   it('prepares one immutable outcome without advancing the durable game', () => {
@@ -165,6 +171,10 @@ describe('tableEngine', () => {
 
     expect(result.status).toBe('settled')
     expect(result.state.pending).toBeNull()
+    expect(result.state.presentationPending).toEqual({
+      type: 'settlement',
+      roundId: pending.id,
+    })
     expect(ready.pending).toBe(pending)
     expect(result.record).toMatchObject({
       id: pending.id,
@@ -200,12 +210,45 @@ describe('tableEngine', () => {
     expect(replay.state.game.history).toHaveLength(1)
   })
 
-  it('preserves the latest wager across a no-bet fly round', () => {
-    const wageredReady = fullyReveal(preparedState())
-    const wagered = settleRoundState(wageredReady, {
+  it('clears only the matching durable settlement presentation', () => {
+    const settled = settleRoundState(fullyReveal(preparedState()), {
       roundId: 'round-engine-1',
       settledAt: '2026-08-01T00:01:00.000Z',
     }).state
+
+    expectEngineError(
+      () =>
+        completeSettlementPresentationState(settled, {
+          roundId: 'another-round',
+        }),
+      'round-mismatch',
+    )
+
+    const completed = completeSettlementPresentationState(settled, {
+      roundId: 'round-engine-1',
+    })
+    expect(completed.game).toBe(settled.game)
+    expect(completed.pending).toBeNull()
+    expect(completed.presentationPending).toBeNull()
+    expect(deriveTablePhase(completed)).toBe('betting')
+    expectEngineError(
+      () =>
+        completeSettlementPresentationState(completed, {
+          roundId: 'round-engine-1',
+        }),
+      'no-presentation-pending',
+    )
+  })
+
+  it('preserves the latest wager across a no-bet fly round', () => {
+    const wageredReady = fullyReveal(preparedState())
+    const wageredSettlement = settleRoundState(wageredReady, {
+      roundId: 'round-engine-1',
+      settledAt: '2026-08-01T00:01:00.000Z',
+    }).state
+    const wagered = completeSettlementPresentationState(wageredSettlement, {
+      roundId: 'round-engine-1',
+    })
     const flyPrepared = prepareRoundState(wagered, {
       bets: EMPTY_BETS,
       playMode: 'fly',
@@ -253,11 +296,46 @@ describe('tableEngine', () => {
     )
   })
 
-  it('replaces only with a different fresh shoe while preserving the ledger', () => {
-    const settled = settleRoundState(fullyReveal(preparedState()), {
+  it('refuses every competing table mutation while settlement presentation is pending', () => {
+    const settling = settleRoundState(fullyReveal(preparedState()), {
       roundId: 'round-engine-1',
       settledAt: '2026-08-01T00:01:00.000Z',
     }).state
+    const replacement = freshShoe(203, 'S-ENGINE-PRESENTATION-BLOCK')
+
+    expectEngineError(
+      () =>
+        prepareRoundState(settling, {
+          bets: PLAYER_BETS,
+          playMode: 'bet',
+          revealControl: 'player-squeeze',
+          roundId: 'round-engine-2',
+        }),
+      'round-in-progress',
+    )
+    expectEngineError(
+      () => replaceShoeState(settling, { shoe: replacement }),
+      'round-in-progress',
+    )
+    expectEngineError(
+      () =>
+        resetTableState(settling, {
+          shoe: replacement,
+          balance: 10_000,
+          sessionStartedAt: '2026-08-01T01:00:00.000Z',
+        }),
+      'round-in-progress',
+    )
+  })
+
+  it('replaces only with a different fresh shoe while preserving the ledger', () => {
+    const settlement = settleRoundState(fullyReveal(preparedState()), {
+      roundId: 'round-engine-1',
+      settledAt: '2026-08-01T00:01:00.000Z',
+    }).state
+    const settled = completeSettlementPresentationState(settlement, {
+      roundId: 'round-engine-1',
+    })
     const replacement = freshShoe(303, 'S-ENGINE-REPLACEMENT')
     const replaced = replaceShoeState(settled, { shoe: replacement })
 
@@ -266,9 +344,7 @@ describe('tableEngine', () => {
     expect(replaced.game.history).toBe(settled.game.history)
     expect(replaced.game.balance).toBe(settled.game.balance)
     expect(replaced.game.lastBets).toBe(settled.game.lastBets)
-    expect(replaced.game.sessionStartedAt).toBe(
-      settled.game.sessionStartedAt,
-    )
+    expect(replaced.game.sessionStartedAt).toBe(settled.game.sessionStartedAt)
 
     expectEngineError(
       () => replaceShoeState(settled, { shoe: settled.game.shoe }),
@@ -277,10 +353,13 @@ describe('tableEngine', () => {
   })
 
   it('resets the complete table from externally supplied time, balance, and shoe', () => {
-    const settled = settleRoundState(fullyReveal(preparedState()), {
+    const settlement = settleRoundState(fullyReveal(preparedState()), {
       roundId: 'round-engine-1',
       settledAt: '2026-08-01T00:01:00.000Z',
     }).state
+    const settled = completeSettlementPresentationState(settlement, {
+      roundId: 'round-engine-1',
+    })
     const replacement = freshShoe(404, 'S-ENGINE-RESET')
     const reset = resetTableState(settled, {
       shoe: replacement,
@@ -298,14 +377,18 @@ describe('tableEngine', () => {
         sessionStartedAt: '2026-08-01T02:00:00.000Z',
       },
       pending: null,
+      presentationPending: null,
     })
   })
 
   it('rejects duplicate round ids after settlement', () => {
-    const settled = settleRoundState(fullyReveal(preparedState()), {
+    const settlement = settleRoundState(fullyReveal(preparedState()), {
       roundId: 'round-engine-1',
       settledAt: '2026-08-01T00:01:00.000Z',
     }).state
+    const settled = completeSettlementPresentationState(settlement, {
+      roundId: 'round-engine-1',
+    })
 
     expectEngineError(
       () =>

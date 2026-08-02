@@ -9,12 +9,13 @@ import type {
   TableMutation,
   TableVersion,
 } from './tableState'
+import { settlementPresentationMatchesGame } from './tableState'
 
 export const TABLE_STORAGE_KEY = 'nine-road-baccarat:table:v2'
 export const LEGACY_GAME_STORAGE_KEY = 'nine-road-baccarat:v1'
 export const LEGACY_PENDING_STORAGE_KEY = 'nine-road-baccarat:pending:v1'
 
-const TABLE_ENVELOPE_KEYS = [
+const REQUIRED_TABLE_ENVELOPE_KEYS = [
   'schemaVersion',
   'revision',
   'commitId',
@@ -24,6 +25,10 @@ const TABLE_ENVELOPE_KEYS = [
   'game',
   'pending',
 ] as const
+const TABLE_ENVELOPE_KEYS = [
+  ...REQUIRED_TABLE_ENVELOPE_KEYS,
+  'presentationPending',
+] as const
 
 const TABLE_MUTATIONS = new Set<TableMutation>([
   'bootstrap',
@@ -31,6 +36,7 @@ const TABLE_MUTATIONS = new Set<TableMutation>([
   'prepare-round',
   'reveal-card',
   'settle-round',
+  'complete-presentation',
   'replace-shoe',
   'reset',
 ])
@@ -44,8 +50,7 @@ export type TableReadResult =
   | { status: 'unavailable' }
 
 export type LegacyMigrationWarning =
-  | 'invalid-pending-discarded'
-  | 'stale-pending-discarded'
+  'invalid-pending-discarded' | 'stale-pending-discarded'
 
 export type LegacyTableReadResult =
   | {
@@ -119,7 +124,7 @@ function isRecord(value: unknown): value is UnknownRecord {
 function hasOnlyEnvelopeKeys(value: UnknownRecord): boolean {
   const allowed = new Set<string>(TABLE_ENVELOPE_KEYS)
   return (
-    TABLE_ENVELOPE_KEYS.every((key) => Object.hasOwn(value, key)) &&
+    REQUIRED_TABLE_ENVELOPE_KEYS.every((key) => Object.hasOwn(value, key)) &&
     Object.keys(value).every((key) => allowed.has(key))
   )
 }
@@ -131,7 +136,9 @@ function isNonEmptyString(value: unknown): value is string {
 function isIsoTimestamp(value: unknown): value is string {
   if (typeof value !== 'string') return false
   const timestamp = Date.parse(value)
-  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value
+  return (
+    Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value
+  )
 }
 
 function isTableCoreState(value: unknown): value is TableCoreState {
@@ -139,9 +146,17 @@ function isTableCoreState(value: unknown): value is TableCoreState {
   const game = value.game
   const pending = value.pending
   if (!isPersistedGameState(game)) return false
-  if (pending === null) return true
-  return (
-    isPersistedPendingRound(pending) && pendingRoundMatchesGame(game, pending)
+  if (
+    pending !== null &&
+    (!isPersistedPendingRound(pending) ||
+      !pendingRoundMatchesGame(game, pending))
+  ) {
+    return false
+  }
+  return settlementPresentationMatchesGame(
+    game,
+    pending,
+    value.presentationPending,
   )
 }
 
@@ -162,7 +177,11 @@ export function isPersistedTableEnvelopeV2(
     return false
   }
 
-  return isTableCoreState({ game: value.game, pending: value.pending })
+  return isTableCoreState({
+    game: value.game,
+    pending: value.pending,
+    presentationPending: value.presentationPending,
+  })
 }
 
 export function readTableEnvelope(): TableReadResult {
@@ -309,7 +328,8 @@ export function commitTableEnvelope({
     return { status: 'conflict', current: current.snapshot }
   }
 
-  const currentRevision = current.status === 'ok' ? current.snapshot.revision : 0
+  const currentRevision =
+    current.status === 'ok' ? current.snapshot.revision : 0
   if (currentRevision >= Number.MAX_SAFE_INTEGER) {
     return { status: 'invalid', reason: 'table revision exhausted' }
   }
@@ -323,6 +343,7 @@ export function commitTableEnvelope({
     lastMutation: mutation,
     game: next.game,
     pending: next.pending,
+    presentationPending: next.presentationPending ?? null,
   }
   if (!isPersistedTableEnvelopeV2(candidate)) {
     return { status: 'invalid', reason: 'invalid table envelope metadata' }

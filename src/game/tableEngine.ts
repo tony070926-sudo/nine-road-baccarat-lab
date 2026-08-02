@@ -18,11 +18,15 @@ import {
   isPersistedGameState,
   isPersistedPendingRound,
 } from './stateValidation'
-import type { TableCoreState } from './tableState'
+import {
+  settlementPresentationMatchesGame,
+  type TableCoreState,
+} from './tableState'
 
 const MAX_HISTORY_LENGTH = 500
 
-export type TablePhase = 'betting' | 'revealing' | 'ready-to-settle'
+export type TablePhase =
+  'betting' | 'revealing' | 'ready-to-settle' | 'settling'
 
 export type TableEngineErrorCode =
   | 'invalid-state'
@@ -33,6 +37,7 @@ export type TableEngineErrorCode =
   | 'reveal-out-of-order'
   | 'round-not-revealed'
   | 'settlement-conflict'
+  | 'no-presentation-pending'
   | 'invalid-shoe'
 
 export class TableEngineError extends Error {
@@ -101,6 +106,18 @@ function assertCoreState(state: TableCoreState): void {
   ) {
     fail('invalid-state', 'The pending round does not match the current game')
   }
+  if (
+    !settlementPresentationMatchesGame(
+      state.game,
+      state.pending,
+      state.presentationPending,
+    )
+  ) {
+    fail(
+      'invalid-state',
+      'The pending settlement presentation does not match the current game',
+    )
+  }
 }
 
 function assertNoPendingRound(state: TableCoreState, operation: string): void {
@@ -108,6 +125,12 @@ function assertNoPendingRound(state: TableCoreState, operation: string): void {
     fail(
       'round-in-progress',
       `Cannot ${operation} while round ${state.pending.id} is pending`,
+    )
+  }
+  if (state.presentationPending) {
+    fail(
+      'round-in-progress',
+      `Cannot ${operation} while round ${state.presentationPending.roundId} awaits settlement presentation`,
     )
   }
 }
@@ -135,6 +158,7 @@ function assertValidNextGame(game: PersistedGameState): void {
 
 export function deriveTablePhase(state: TableCoreState): TablePhase {
   assertCoreState(state)
+  if (state.presentationPending) return 'settling'
   if (!state.pending) return 'betting'
 
   return state.pending.revealedCount === state.pending.result.dealOrder.length
@@ -164,6 +188,7 @@ export function prepareRoundState(
   return {
     game: state.game,
     pending,
+    presentationPending: null,
   }
 }
 
@@ -201,6 +226,7 @@ export function advanceRevealState(
       ...pending,
       revealedCount: input.nextRevealedCount,
     },
+    presentationPending: null,
   }
 }
 
@@ -268,9 +294,7 @@ export function settleRoundState(
     shoe: pending.shoeAfter,
     history: [...state.game.history, record].slice(-MAX_HISTORY_LENGTH),
     lastBets:
-      settlement.totalStake > 0
-        ? { ...pending.bets }
-        : state.game.lastBets,
+      settlement.totalStake > 0 ? { ...pending.bets } : state.game.lastBets,
   }
   assertValidNextGame(nextGame)
 
@@ -279,8 +303,38 @@ export function settleRoundState(
     state: {
       game: nextGame,
       pending: null,
+      presentationPending: {
+        type: 'settlement',
+        roundId: pending.id,
+      },
     },
     record,
+  }
+}
+
+export function completeSettlementPresentationState(
+  state: TableCoreState,
+  input: { roundId: string },
+): TableCoreState {
+  assertCoreState(state)
+  const presentationPending = state.presentationPending
+  if (!presentationPending) {
+    fail(
+      'no-presentation-pending',
+      `Round ${input.roundId} has no pending settlement presentation`,
+    )
+  }
+  if (presentationPending.roundId !== input.roundId) {
+    fail(
+      'round-mismatch',
+      `Round ${input.roundId} does not match settlement presentation ${presentationPending.roundId}`,
+    )
+  }
+
+  return {
+    game: state.game,
+    pending: null,
+    presentationPending: null,
   }
 }
 
@@ -301,6 +355,7 @@ export function replaceShoeState(
   return {
     game: nextGame,
     pending: null,
+    presentationPending: null,
   }
 }
 
@@ -325,5 +380,6 @@ export function resetTableState(
   return {
     game: nextGame,
     pending: null,
+    presentationPending: null,
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EMPTY_BETS, createSeededRandomInt, createShoe } from '../game/baccarat'
-import { prepareRoundState } from '../game/tableEngine'
+import { prepareRoundState, settleRoundState } from '../game/tableEngine'
 import type { TableCoordinator } from '../game/tableCoordinator'
 import type { TableLeaseRelease } from '../game/tableLease'
 import type { PersistedTableEnvelopeV2 } from '../game/tableState'
@@ -35,6 +35,30 @@ function pendingEnvelope(): PersistedTableEnvelopeV2 {
     lastMutation: 'prepare-round',
     game: prepared.game,
     pending: prepared.pending,
+  }
+}
+
+function settlementEnvelope(): PersistedTableEnvelopeV2 {
+  const prepared = pendingEnvelope()
+  if (!prepared.pending) throw new Error('Expected a pending round')
+  const fullyRevealed = {
+    ...prepared.pending,
+    revealedCount: prepared.pending.result.dealOrder.length,
+  }
+  const settled = settleRoundState(
+    {
+      game: prepared.game,
+      pending: fullyRevealed,
+      presentationPending: null,
+    },
+    { roundId: fullyRevealed.id, settledAt: '2026-08-02T00:01:00.000Z' },
+  )
+  return {
+    ...prepared,
+    revision: prepared.revision + 1,
+    commitId: 'RESTORE-LOOP-SETTLEMENT-COMMIT',
+    lastMutation: 'settle-round',
+    ...settled.state,
   }
 }
 
@@ -95,6 +119,36 @@ function coordinatorHarness(snapshot: PersistedTableEnvelopeV2) {
 }
 
 describe('startTableRestoreLoop', () => {
+  it('keeps the restore lease while replaying durable settlement', async () => {
+    const snapshot = settlementEnvelope()
+    const release = vi.fn()
+    const tableLease = new TableLeaseArbiter(async () => release)
+    const table = coordinatorHarness(snapshot)
+    const applySnapshot = vi.fn()
+    const updateUi = vi.fn()
+    const cleanup = startTableRestoreLoop({
+      initialGame: snapshot.game,
+      tableCoordinator: table.coordinator,
+      tableLease,
+      applySnapshot,
+      cancelProcedure: vi.fn(),
+      releaseLease: () => tableLease.release(),
+      updateUi,
+      leaseSupported: () => true,
+    })
+    await flushPromises()
+
+    expect(applySnapshot).toHaveBeenCalledWith(snapshot, true)
+    expect(tableLease.owns('restore')).toBe(true)
+    expect(release).not.toHaveBeenCalled()
+    expect(updateUi).not.toHaveBeenCalledWith(
+      expect.objectContaining({ announcement: expect.stringContaining('请先选择下注') }),
+    )
+
+    cleanup()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it('invalidates a stale acquisition and coalesces repeated snapshot retries', async () => {
     const snapshot = pendingEnvelope()
     const first = deferredLease()
