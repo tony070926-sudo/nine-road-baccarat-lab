@@ -29,6 +29,9 @@ const MAX_EVENT_IDS = 128
 export const AUDIO_SAMPLE_RETRY_MS = 600_000
 export const DEALER_CALL_FALLBACK_MS = 3_000
 export const DEALER_CALL_MAX_FALLBACK_MS = 4_500
+export const DEALER_VOICE_DUCK_RATIO = 0.38
+export const DEALER_VOICE_DUCK_ATTACK_S = 0.035
+export const DEALER_VOICE_DUCK_RELEASE_S = 0.16
 
 export type DealerCallCompletion =
   | 'ended'
@@ -47,6 +50,12 @@ interface ActiveDealerCall {
   request: DealerCallRequest
   utterance: SpeechSynthesisUtterance
   timer: ReturnType<typeof globalThis.setTimeout> | null
+  started: boolean
+}
+
+interface AmbientTransientDuck {
+  context: AudioContext
+  until: number
 }
 
 export function dealerCallFallbackMs(text: string): number {
@@ -158,6 +167,13 @@ interface AudioGraph {
   compressor: DynamicsCompressorNode
 }
 
+interface AmbientSourceReplacement {
+  graph: AudioGraph
+  source: AudioBufferSourceNode
+  buffer: AudioBuffer
+  timer: ReturnType<typeof globalThis.setTimeout> | null
+}
+
 export class CasinoAudioDirector {
   private graph: AudioGraph | null = null
   private enabled = false
@@ -177,6 +193,11 @@ export class CasinoAudioDirector {
   private pendingEventIds = new Set<string>()
   private dealerCallQueue: DealerCallRequest[] = []
   private activeDealerCall: ActiveDealerCall | null = null
+  private dealerVoiceDucking = false
+  private ambientTransientDuck: AmbientTransientDuck | null = null
+  private ambientEnvelopeContext: AudioContext | null = null
+  private ambientEnvelopeSettlesAt = 0
+  private ambientSourceReplacement: AmbientSourceReplacement | null = null
   private dealerCallPromises = new Map<
     string,
     Promise<DealerCallCompletion>
@@ -193,7 +214,10 @@ export class CasinoAudioDirector {
       saveAudioPreference(enabled)
       return
     }
-    if (!enabled) this.cancelDealerCalls()
+    if (!enabled) {
+      this.cancelDealerCalls()
+      this.resetAmbientDuckingImmediately()
+    }
 
     this.enabled = enabled
     this.lifecycleEpoch += 1
@@ -217,12 +241,13 @@ export class CasinoAudioDirector {
   }
 
   setMix(update: Partial<CasinoAudioMix>): CasinoAudioMix {
+    const previousMix = this.mix
     this.mix = normalizeAudioMix({ ...this.mix, ...update })
     if (this.mix.master === 0 || this.mix.voice === 0) {
       this.cancelDealerCalls()
     }
     saveAudioMix(this.mix)
-    this.applyMix()
+    this.applyMix(previousMix)
     return this.getMix()
   }
 
@@ -279,6 +304,8 @@ export class CasinoAudioDirector {
       ) {
         return false
       }
+      const resumeExistingAmbient =
+        graph.context.state === 'suspended' && this.ambientSource !== null
       if (graph.context.state === 'suspended') {
         await graph.context.resume()
       }
@@ -309,6 +336,8 @@ export class CasinoAudioDirector {
       )
       void this.preloadSamples(graph.context)
       this.startAmbient()
+      if (resumeExistingAmbient) this.syncAmbientEnvelope(graph, 0)
+      this.tryAmbientSourceReplacement()
       return true
     } catch {
       return false
@@ -317,7 +346,10 @@ export class CasinoAudioDirector {
 
   async setPageVisible(visible: boolean) {
     if (this.pageVisible === visible) return
-    if (!visible) this.cancelDealerCalls()
+    if (!visible) {
+      this.cancelDealerCalls()
+      this.resetAmbientDuckingImmediately()
+    }
 
     this.pageVisible = visible
     this.lifecycleEpoch += 1
@@ -839,10 +871,15 @@ export class CasinoAudioDirector {
     queued.forEach((request) =>
       this.completeDealerCall(request, 'cancelled'),
     )
+    this.setDealerVoiceDucking(false)
   }
 
   private drainDealerCallQueue() {
-    if (this.activeDealerCall || this.dealerCallQueue.length === 0) return
+    if (this.activeDealerCall) return
+    if (this.dealerCallQueue.length === 0) {
+      this.setDealerVoiceDucking(false)
+      return
+    }
     if (!this.enabled || !this.pageVisible) {
       this.cancelDealerCalls()
       return
@@ -875,8 +912,14 @@ export class CasinoAudioDirector {
         request,
         utterance,
         timer: null,
+        started: false,
       }
       this.activeDealerCall = active
+      utterance.onstart = () => {
+        if (this.activeDealerCall !== active || active.started) return
+        active.started = true
+        this.setDealerVoiceDucking(true)
+      }
       utterance.onend = () => this.finishActiveDealerCall(active, 'ended')
       utterance.onerror = () => this.finishActiveDealerCall(active, 'error')
       active.timer = globalThis.setTimeout(
@@ -928,6 +971,13 @@ export class CasinoAudioDirector {
   private ensureGraph(): AudioGraph {
     if (this.graph?.context.state === 'closed') {
       const closedGraph = this.graph
+      if (this.ambientTransientDuck?.context === closedGraph.context) {
+        this.ambientTransientDuck = null
+      }
+      if (this.ambientEnvelopeContext === closedGraph.context) {
+        this.ambientEnvelopeContext = null
+        this.ambientEnvelopeSettlesAt = 0
+      }
       this.stopAmbient()
       ;[
         closedGraph.effects,
@@ -974,7 +1024,7 @@ export class CasinoAudioDirector {
     const compressor = context.createDynamicsCompressor()
     master.gain.value = 0
     effects.gain.value = MASTER_LEVEL * this.mix.effects
-    ambient.gain.value = AMBIENT_LEVEL * this.mix.ambient
+    ambient.gain.value = this.ambientSustainedTargetLevel()
     voice.gain.value = MASTER_LEVEL * this.mix.voice
     compressor.threshold.value = -16
     compressor.knee.value = 14
@@ -1173,7 +1223,8 @@ export class CasinoAudioDirector {
 
   private startAmbient() {
     const graph = this.graph
-    if (!graph || this.ambientSource || graph.context.state !== 'running') return
+    if (!graph || graph.context.state !== 'running') return
+    if (this.ambientSource) return
 
     const context = graph.context
     const source = context.createBufferSource()
@@ -1195,33 +1246,89 @@ export class CasinoAudioDirector {
     }
     lfo.type = 'sine'
     lfo.frequency.value = 0.085
-    lfoGain.gain.value = 0.004 * this.mix.ambient
+    lfoGain.gain.value = this.currentAmbientLfoTargetLevel(graph)
     lfo.connect(lfoGain).connect(graph.ambient.gain)
     source.start()
     lfo.start()
     this.ambientSource = source
     this.ambientLfo = lfo
     this.ambientLfoGain = lfoGain
+    this.syncAmbientEnvelope(graph, 0)
 
     if (!recordedRoom) {
       void this.loadSample(context, 'room-crowd-loop').then((buffer) => {
-        if (
-          !buffer ||
-          this.graph !== graph ||
-          this.ambientSource !== source ||
-          !this.enabled ||
-          !this.pageVisible ||
-          context.state !== 'running'
-        ) {
-          return
+        if (buffer) {
+          this.queueAmbientSourceReplacement(graph, source, buffer)
         }
-        this.stopAmbient()
-        this.startAmbient()
       })
     }
   }
 
+  private queueAmbientSourceReplacement(
+    graph: AudioGraph,
+    source: AudioBufferSourceNode,
+    buffer: AudioBuffer,
+  ) {
+    this.clearAmbientSourceReplacement()
+    this.ambientSourceReplacement = {
+      graph,
+      source,
+      buffer,
+      timer: null,
+    }
+    this.tryAmbientSourceReplacement()
+  }
+
+  private tryAmbientSourceReplacement() {
+    const replacement = this.ambientSourceReplacement
+    if (!replacement) return
+
+    const { graph, source } = replacement
+    const context = graph.context
+    if (
+      this.graph !== graph ||
+      this.ambientSource !== source ||
+      this.sampleBuffers.get('room-crowd-loop') !== replacement.buffer ||
+      !this.enabled ||
+      !this.pageVisible ||
+      context.state === 'closed'
+    ) {
+      this.clearAmbientSourceReplacement()
+      return
+    }
+    if (context.state !== 'running') return
+
+    const remaining =
+      this.ambientEnvelopeContext === context
+        ? this.ambientEnvelopeSettlesAt - context.currentTime
+        : 0
+    if (remaining > 0) {
+      if (replacement.timer === null) {
+        replacement.timer = globalThis.setTimeout(() => {
+          replacement.timer = null
+          if (this.ambientSourceReplacement === replacement) {
+            this.tryAmbientSourceReplacement()
+          }
+        }, Math.ceil(remaining * 1_000) + 1)
+      }
+      return
+    }
+
+    this.clearAmbientSourceReplacement()
+    this.stopAmbient()
+    this.startAmbient()
+  }
+
+  private clearAmbientSourceReplacement() {
+    const replacement = this.ambientSourceReplacement
+    if (replacement?.timer !== null && replacement?.timer !== undefined) {
+      globalThis.clearTimeout(replacement.timer)
+    }
+    this.ambientSourceReplacement = null
+  }
+
   private stopAmbient() {
+    this.clearAmbientSourceReplacement()
     try {
       this.ambientSource?.stop()
       this.ambientLfo?.stop()
@@ -1283,50 +1390,177 @@ export class CasinoAudioDirector {
     graph.master.gain.linearRampToValueAtTime(target, now + 0.035)
   }
 
-  private applyMix() {
+  private applyMix(previousMix: CasinoAudioMix) {
     const graph = this.graph
     if (!graph || graph.context.state === 'closed') return
 
     const now = graph.context.currentTime
-    graph.effects.gain.cancelScheduledValues(now)
-    graph.effects.gain.setValueAtTime(
-      MASTER_LEVEL * this.mix.effects,
-      now,
-    )
-    graph.ambient.gain.cancelScheduledValues(now)
-    graph.ambient.gain.setValueAtTime(
-      AMBIENT_LEVEL * this.mix.ambient,
-      now,
-    )
-    graph.voice.gain.cancelScheduledValues(now)
-    graph.voice.gain.setValueAtTime(MASTER_LEVEL * this.mix.voice, now)
-    if (this.ambientLfoGain) {
-      this.ambientLfoGain.gain.setValueAtTime(
-        0.004 * this.mix.ambient,
+    if (this.mix.effects !== previousMix.effects) {
+      graph.effects.gain.cancelScheduledValues(now)
+      graph.effects.gain.setValueAtTime(
+        MASTER_LEVEL * this.mix.effects,
         now,
       )
     }
+    if (this.mix.voice !== previousMix.voice) {
+      graph.voice.gain.cancelScheduledValues(now)
+      graph.voice.gain.setValueAtTime(MASTER_LEVEL * this.mix.voice, now)
+    }
+    if (this.mix.ambient !== previousMix.ambient) {
+      this.syncAmbientEnvelope(graph, 0)
+    }
+    if (this.mix.master !== previousMix.master) {
+      this.fadeMaster(
+        this.enabled && this.pageVisible
+          ? MASTER_LEVEL * this.mix.master
+          : 0,
+      )
+    }
+  }
 
-    this.fadeMaster(
-      this.enabled && this.pageVisible
-        ? MASTER_LEVEL * this.mix.master
-        : 0,
+  private ambientBaseLevel() {
+    return AMBIENT_LEVEL * this.mix.ambient
+  }
+
+  private ambientLfoBaseLevel() {
+    return 0.004 * this.mix.ambient
+  }
+
+  private ambientSustainedTargetLevel() {
+    return (
+      this.ambientBaseLevel() *
+      (this.dealerVoiceDucking ? DEALER_VOICE_DUCK_RATIO : 1)
     )
+  }
+
+  private ambientLfoSustainedTargetLevel() {
+    return (
+      this.ambientLfoBaseLevel() *
+      (this.dealerVoiceDucking ? DEALER_VOICE_DUCK_RATIO : 1)
+    )
+  }
+
+  private ambientTransientRatio() {
+    const base = this.ambientBaseLevel()
+    return base > 0 ? Math.min(0.007, base * 0.4) / base : 0
+  }
+
+  private ambientTransientTargetLevel() {
+    return Math.min(
+      this.ambientSustainedTargetLevel(),
+      this.ambientBaseLevel() * this.ambientTransientRatio(),
+    )
+  }
+
+  private ambientLfoTransientTargetLevel() {
+    return Math.min(
+      this.ambientLfoSustainedTargetLevel(),
+      this.ambientLfoBaseLevel() * this.ambientTransientRatio(),
+    )
+  }
+
+  private activeAmbientTransientDuck(graph: AudioGraph, at: number) {
+    const transient = this.ambientTransientDuck
+    if (
+      !transient ||
+      transient.context !== graph.context ||
+      transient.until <= at
+    ) {
+      if (transient) this.ambientTransientDuck = null
+      return null
+    }
+    return transient
+  }
+
+  private currentAmbientLfoTargetLevel(graph: AudioGraph) {
+    return this.activeAmbientTransientDuck(
+      graph,
+      graph.context.currentTime,
+    )
+      ? this.ambientLfoTransientTargetLevel()
+      : this.ambientLfoSustainedTargetLevel()
+  }
+
+  private syncAmbientEnvelope(graph: AudioGraph, transition: number) {
+    if (graph.context.state === 'closed') return
+
+    const now = graph.context.currentTime
+    const transitionEnd = now + Math.max(0, transition)
+    const transient = this.activeAmbientTransientDuck(graph, now)
+    const transientContinues =
+      transient !== null && transient.until > transitionEnd
+    const ambientSustained = this.ambientSustainedTargetLevel()
+    const ambientLfoSustained = this.ambientLfoSustainedTargetLevel()
+    const ambientTarget = transientContinues
+      ? this.ambientTransientTargetLevel()
+      : ambientSustained
+    const ambientLfoTarget = transientContinues
+      ? this.ambientLfoTransientTargetLevel()
+      : ambientLfoSustained
+
+    const schedule = (
+      parameter: AudioParam,
+      target: number,
+      sustained: number,
+    ) => {
+      if (transition > 0) {
+        const heldValue = parameter.value
+        if (typeof parameter.cancelAndHoldAtTime === 'function') {
+          parameter.cancelAndHoldAtTime(now)
+        } else {
+          parameter.cancelScheduledValues(now)
+          parameter.setValueAtTime(heldValue, now)
+        }
+        parameter.linearRampToValueAtTime(target, transitionEnd)
+      } else {
+        parameter.cancelScheduledValues(now)
+        parameter.setValueAtTime(target, now)
+      }
+      if (transientContinues && transient) {
+        parameter.linearRampToValueAtTime(sustained, transient.until)
+      }
+    }
+
+    schedule(graph.ambient.gain, ambientTarget, ambientSustained)
+    if (this.ambientLfoGain) {
+      schedule(
+        this.ambientLfoGain.gain,
+        ambientLfoTarget,
+        ambientLfoSustained,
+      )
+    }
+    this.ambientEnvelopeContext = graph.context
+    this.ambientEnvelopeSettlesAt =
+      transientContinues && transient ? transient.until : transitionEnd
+  }
+
+  private resetAmbientDuckingImmediately() {
+    this.dealerVoiceDucking = false
+    this.ambientTransientDuck = null
+    const graph = this.graph
+    if (!graph || graph.context.state === 'closed') return
+    this.syncAmbientEnvelope(graph, 0)
+  }
+
+  private setDealerVoiceDucking(ducking: boolean) {
+    if (this.dealerVoiceDucking === ducking) return
+    this.dealerVoiceDucking = ducking
+    const graph = this.graph
+    if (!graph || graph.context.state === 'closed') return
+    const transition = ducking
+      ? DEALER_VOICE_DUCK_ATTACK_S
+      : DEALER_VOICE_DUCK_RELEASE_S
+    this.syncAmbientEnvelope(graph, transition)
   }
 
   private duckAmbient(graph: AudioGraph, duration: number) {
     const now = graph.context.currentTime
-    const ambientLevel = AMBIENT_LEVEL * this.mix.ambient
-    graph.ambient.gain.cancelScheduledValues(now)
-    graph.ambient.gain.setValueAtTime(graph.ambient.gain.value, now)
-    graph.ambient.gain.linearRampToValueAtTime(
-      Math.min(0.007, ambientLevel * 0.4),
-      now + 0.025,
-    )
-    graph.ambient.gain.linearRampToValueAtTime(
-      ambientLevel,
-      now + duration,
-    )
+    const existing = this.activeAmbientTransientDuck(graph, now)
+    this.ambientTransientDuck = {
+      context: graph.context,
+      until: Math.max(existing?.until ?? now, now + Math.max(0, duration)),
+    }
+    this.syncAmbientEnvelope(graph, 0.025)
   }
 
   private createPanner(

@@ -3,6 +3,9 @@ import {
   AUDIO_SAMPLE_RETRY_MS,
   CasinoAudioDirector,
   DEALER_CALL_FALLBACK_MS,
+  DEALER_VOICE_DUCK_ATTACK_S,
+  DEALER_VOICE_DUCK_RATIO,
+  DEALER_VOICE_DUCK_RELEASE_S,
   DEFAULT_CASINO_AUDIO_MIX,
   dealerCallFallbackMs,
   loadAudioMix,
@@ -16,6 +19,7 @@ class MockSpeechSynthesisUtterance {
   pitch = 1
   volume = 1
   voice: SpeechSynthesisVoice | null = null
+  onstart: (() => void) | null = null
   onend: (() => void) | null = null
   onerror: (() => void) | null = null
 
@@ -43,6 +47,8 @@ function createSpeechHarness() {
   vi.stubGlobal('SpeechSynthesisUtterance', MockSpeechSynthesisUtterance)
   vi.stubGlobal('window', {
     localStorage,
+    clearTimeout: globalThis.clearTimeout,
+    setTimeout: globalThis.setTimeout,
     speechSynthesis: {
       speak,
       cancel,
@@ -56,6 +62,7 @@ function createSpeechHarness() {
 function createAudioParam(value = 0) {
   return {
     value,
+    cancelAndHoldAtTime: vi.fn(),
     cancelScheduledValues: vi.fn(),
     exponentialRampToValueAtTime: vi.fn(),
     linearRampToValueAtTime: vi.fn(),
@@ -289,15 +296,249 @@ describe('CasinoAudioDirector dealer calls', () => {
     await expect(second).resolves.toBe('error')
   })
 
+  it('holds ambient ducking across queued calls and releases after the queue', async () => {
+    vi.useFakeTimers()
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(18)
+    harness.graph.ambient.gain.value = 0.018
+    const ambientLfoGain = createAudioNode({ gain: createAudioParam(0.004) })
+    installWebAudioHarness(director, harness.graph)
+    ;(
+      director as unknown as { ambientLfoGain: typeof ambientLfoGain }
+    ).ambientLfoGain = ambientLfoGain
+
+    const first = director.playDealerCall('round-11:queue-points', '闲家五点')
+    const second = director.playDealerCall('round-11:queue-draw', '庄家补牌')
+    const firstUtterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
+    await vi.advanceTimersByTimeAsync(400)
+    expect(
+      harness.graph.ambient.gain.linearRampToValueAtTime,
+    ).not.toHaveBeenCalled()
+    expect(ambientLfoGain.gain.linearRampToValueAtTime).not.toHaveBeenCalled()
+
+    firstUtterance.onstart?.()
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018 * DEALER_VOICE_DUCK_RATIO,
+      18 + DEALER_VOICE_DUCK_ATTACK_S,
+    )
+    expect(ambientLfoGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.004 * DEALER_VOICE_DUCK_RATIO,
+      18 + DEALER_VOICE_DUCK_ATTACK_S,
+    )
+    expect(harness.graph.effects.gain.cancelScheduledValues).not.toHaveBeenCalled()
+
+    firstUtterance.onend?.()
+    await expect(first).resolves.toBe('ended')
+    expect(speak).toHaveBeenCalledTimes(2)
+    expect(
+      harness.graph.ambient.gain.linearRampToValueAtTime,
+    ).not.toHaveBeenCalledWith(0.018, 18 + DEALER_VOICE_DUCK_RELEASE_S)
+
+    const secondUtterance = speak.mock.calls[1][0] as MockSpeechSynthesisUtterance
+    secondUtterance.onstart?.()
+    secondUtterance.onend?.()
+    await expect(second).resolves.toBe('ended')
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018,
+      18 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+    expect(ambientLfoGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.004,
+      18 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+  })
+
+  it('holds the current level before cancelling automation on older browsers', async () => {
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(19)
+    harness.graph.ambient.gain.value = 0.012
+    const ambientGain = harness.graph.ambient.gain as unknown as {
+      cancelAndHoldAtTime?: ReturnType<typeof vi.fn>
+      cancelScheduledValues: ReturnType<typeof vi.fn>
+      setValueAtTime: ReturnType<typeof vi.fn>
+    }
+    delete ambientGain.cancelAndHoldAtTime
+    installWebAudioHarness(director, harness.graph)
+
+    const call = director.playDealerCall(
+      'round-11:legacy-envelope',
+      '闲家五点',
+    )
+    const utterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
+    utterance.onstart?.()
+
+    expect(ambientGain.cancelScheduledValues).toHaveBeenCalledWith(19)
+    expect(ambientGain.setValueAtTime).toHaveBeenCalledWith(0.012, 19)
+    expect(harness.graph.effects.gain.cancelScheduledValues).not.toHaveBeenCalled()
+    utterance.onend?.()
+    await expect(call).resolves.toBe('ended')
+  })
+
+  it('keeps a changed ambient mix ducked until speech is cancelled', async () => {
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(20)
+    harness.graph.ambient.gain.value = 0.018
+    const ambientLfoGain = createAudioNode({ gain: createAudioParam(0.004) })
+    installWebAudioHarness(director, harness.graph)
+    ;(
+      director as unknown as { ambientLfoGain: typeof ambientLfoGain }
+    ).ambientLfoGain = ambientLfoGain
+
+    const call = director.playDealerCall('round-11:mix-points', '闲家六点')
+    const utterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
+    utterance.onstart?.()
+    harness.graph.ambient.gain.cancelScheduledValues.mockClear()
+    ambientLfoGain.gain.cancelScheduledValues.mockClear()
+    director.setMixChannel('ambient', 0.5)
+    expect(harness.graph.ambient.gain.cancelScheduledValues).toHaveBeenCalledWith(
+      20,
+    )
+    expect(ambientLfoGain.gain.cancelScheduledValues).toHaveBeenCalledWith(20)
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenCalledWith(
+      0.018 * 0.5 * DEALER_VOICE_DUCK_RATIO,
+      20,
+    )
+    expect(ambientLfoGain.gain.setValueAtTime).toHaveBeenCalledWith(
+      0.004 * 0.5 * DEALER_VOICE_DUCK_RATIO,
+      20,
+    )
+    expect(harness.graph.effects.gain.setValueAtTime).not.toHaveBeenCalled()
+
+    director.cancelDealerCalls()
+    await expect(call).resolves.toBe('cancelled')
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018 * 0.5,
+      20 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+    expect(ambientLfoGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.004 * 0.5,
+      20 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+    expect(speak).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a transient cue duck active when dealer speech ends first', async () => {
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(24)
+    harness.graph.ambient.gain.value = 0.018
+    const ambientLfoGain = createAudioNode({ gain: createAudioParam(0.004) })
+    installWebAudioHarness(director, harness.graph)
+    const internals = director as unknown as {
+      ambientLfoGain: typeof ambientLfoGain
+      duckAmbient(graph: typeof harness.graph, duration: number): void
+    }
+    internals.ambientLfoGain = ambientLfoGain
+
+    internals.duckAmbient(harness.graph, 0.7)
+    const call = director.playDealerCall(
+      'round-11:overlap-result',
+      '庄家胜',
+    )
+    const utterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
+    utterance.onstart?.()
+    ;(harness.graph.context as unknown as { currentTime: number }).currentTime =
+      24.2
+    harness.graph.ambient.gain.cancelAndHoldAtTime.mockClear()
+    harness.graph.ambient.gain.linearRampToValueAtTime.mockClear()
+    ambientLfoGain.gain.cancelAndHoldAtTime.mockClear()
+    ambientLfoGain.gain.linearRampToValueAtTime.mockClear()
+
+    utterance.onend?.()
+    await expect(call).resolves.toBe('ended')
+
+    expect(harness.graph.ambient.gain.cancelAndHoldAtTime).toHaveBeenCalledWith(
+      24.2,
+    )
+    expect(ambientLfoGain.gain.cancelAndHoldAtTime).toHaveBeenCalledWith(24.2)
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      expect.closeTo(0.007, 10),
+      24.2 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018,
+      24.7,
+    )
+    expect(ambientLfoGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      expect.closeTo(0.004 * (0.007 / 0.018), 10),
+      24.2 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+    expect(ambientLfoGain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.004,
+      24.7,
+    )
+    expect(harness.graph.effects.gain.cancelScheduledValues).not.toHaveBeenCalled()
+  })
+
+  it('preserves voice and transient duck reasons across an ambient mix change', async () => {
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(30)
+    harness.graph.ambient.gain.value = 0.018
+    const ambientLfoGain = createAudioNode({ gain: createAudioParam(0.004) })
+    installWebAudioHarness(director, harness.graph)
+    const internals = director as unknown as {
+      ambientLfoGain: typeof ambientLfoGain
+      duckAmbient(graph: typeof harness.graph, duration: number): void
+    }
+    internals.ambientLfoGain = ambientLfoGain
+
+    internals.duckAmbient(harness.graph, 0.7)
+    const call = director.playDealerCall(
+      'round-11:overlap-mix',
+      '闲家六点',
+    )
+    const utterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
+    utterance.onstart?.()
+    harness.graph.ambient.gain.cancelScheduledValues.mockClear()
+    ambientLfoGain.gain.cancelScheduledValues.mockClear()
+
+    director.setMixChannel('ambient', 0.5)
+
+    expect(harness.graph.ambient.gain.cancelScheduledValues).toHaveBeenCalledWith(
+      30,
+    )
+    expect(ambientLfoGain.gain.cancelScheduledValues).toHaveBeenCalledWith(30)
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenCalledWith(
+      0.018 * 0.5 * DEALER_VOICE_DUCK_RATIO,
+      30,
+    )
+    expect(ambientLfoGain.gain.setValueAtTime).toHaveBeenCalledWith(
+      0.004 * 0.5 * DEALER_VOICE_DUCK_RATIO,
+      30,
+    )
+
+    ;(harness.graph.context as unknown as { currentTime: number }).currentTime =
+      30.1
+    harness.graph.ambient.gain.linearRampToValueAtTime.mockClear()
+    utterance.onend?.()
+    await expect(call).resolves.toBe('ended')
+
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018 * 0.5 * 0.4,
+      30.1 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018 * 0.5,
+      30.7,
+    )
+  })
+
   it('ignores a cancelled utterance finishing after the next call starts', async () => {
     const { cancel, speak } = createSpeechHarness()
     const director = new CasinoAudioDirector()
-    director.setEnabled(true)
+    const harness = createWebAudioHarness(34)
+    harness.graph.ambient.gain.value = 0.018
+    installWebAudioHarness(director, harness.graph)
 
     const stale = director.playDealerCall('round-11:stale', '闲家五点')
     const staleUtterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
     director.cancelDealerCalls()
     await expect(stale).resolves.toBe('cancelled')
+    harness.graph.ambient.gain.linearRampToValueAtTime.mockClear()
 
     const current = director.playDealerCall('round-12:current', '庄家六点')
     const currentUtterance = speak.mock.calls[1][0] as MockSpeechSynthesisUtterance
@@ -305,6 +546,15 @@ describe('CasinoAudioDirector dealer calls', () => {
     void current.then(() => {
       currentFinished = true
     })
+    staleUtterance.onstart?.()
+    expect(
+      harness.graph.ambient.gain.linearRampToValueAtTime,
+    ).not.toHaveBeenCalled()
+    currentUtterance.onstart?.()
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018 * DEALER_VOICE_DUCK_RATIO,
+      34 + DEALER_VOICE_DUCK_ATTACK_S,
+    )
     staleUtterance.onend?.()
     await Promise.resolve()
 
@@ -319,7 +569,9 @@ describe('CasinoAudioDirector dealer calls', () => {
     vi.useFakeTimers()
     const { cancel, speak } = createSpeechHarness()
     const director = new CasinoAudioDirector()
-    director.setEnabled(true)
+    const harness = createWebAudioHarness(36)
+    harness.graph.ambient.gain.value = 0.018
+    installWebAudioHarness(director, harness.graph)
 
     const call = director.playDealerCall('round-12:points', '闲家四点，庄家六点')
     const queued = director.playDealerCall('round-12:result', '庄家胜')
@@ -335,6 +587,9 @@ describe('CasinoAudioDirector dealer calls', () => {
     await vi.advanceTimersByTimeAsync(1)
     await expect(call).resolves.toBe('timeout')
     expect(cancel).toHaveBeenCalledTimes(1)
+    expect(
+      harness.graph.ambient.gain.linearRampToValueAtTime,
+    ).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(0)
     expect(speak).toHaveBeenCalledTimes(2)
 
@@ -347,7 +602,9 @@ describe('CasinoAudioDirector dealer calls', () => {
   it('skips muted calls and fails open when synthesis throws', async () => {
     const { speak } = createSpeechHarness()
     const director = new CasinoAudioDirector()
-    director.setEnabled(true)
+    const harness = createWebAudioHarness(38)
+    harness.graph.ambient.gain.value = 0.018
+    installWebAudioHarness(director, harness.graph)
     director.setMixChannel('voice', 0)
 
     await expect(
@@ -362,6 +619,20 @@ describe('CasinoAudioDirector dealer calls', () => {
     await expect(
       director.playDealerCall('round-13:error', '停止下注'),
     ).resolves.toBe('error')
+    expect(
+      harness.graph.ambient.gain.linearRampToValueAtTime,
+    ).not.toHaveBeenCalled()
+
+    const beforeStart = director.playDealerCall(
+      'round-13:error-before-start',
+      '庄家补牌',
+    )
+    const utterance = speak.mock.calls[1][0] as MockSpeechSynthesisUtterance
+    utterance.onerror?.()
+    await expect(beforeStart).resolves.toBe('error')
+    expect(
+      harness.graph.ambient.gain.linearRampToValueAtTime,
+    ).not.toHaveBeenCalled()
   })
 })
 
@@ -459,6 +730,219 @@ describe('CasinoAudioDirector persistent mix', () => {
     expect(
       harness.graph.master.gain.linearRampToValueAtTime,
     ).toHaveBeenCalledWith(0, 14.035)
+  })
+
+  it('restores a clean ambient target across hidden and disabled suspension', async () => {
+    vi.useFakeTimers()
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(44)
+    const context = harness.graph.context as unknown as {
+      currentTime: number
+      state: AudioContextState
+      resume: ReturnType<typeof vi.fn>
+      suspend: ReturnType<typeof vi.fn>
+    }
+    context.resume.mockImplementation(async () => {
+      context.state = 'running'
+    })
+    context.suspend.mockImplementation(async () => {
+      context.state = 'suspended'
+    })
+    director.setEnabled(true)
+    const internals = director as unknown as {
+      ambientLfoGain: ReturnType<typeof createAudioNode<{
+        gain: ReturnType<typeof createAudioParam>
+      }>> | null
+      duckAmbient(graph: typeof harness.graph, duration: number): void
+      graph: typeof harness.graph
+      noiseBuffer: AudioBuffer
+      noiseBufferContext: AudioContext
+      preloadSamples(context: AudioContext): Promise<void>
+    }
+    internals.graph = harness.graph
+    internals.noiseBuffer = {} as AudioBuffer
+    internals.noiseBufferContext = harness.graph.context
+    internals.preloadSamples = vi.fn(async () => undefined)
+
+    await expect(director.unlock()).resolves.toBe(true)
+    const firstLfo = internals.ambientLfoGain
+    const visibleCall = director.playDealerCall(
+      'round-14:visible',
+      '闲家五点',
+    )
+    ;(speak.mock.calls[0][0] as MockSpeechSynthesisUtterance).onstart?.()
+    internals.duckAmbient(harness.graph, 0.7)
+    harness.graph.ambient.gain.setValueAtTime.mockClear()
+    firstLfo?.gain.setValueAtTime.mockClear()
+    harness.graph.effects.gain.cancelScheduledValues.mockClear()
+
+    await director.setPageVisible(false)
+    await expect(visibleCall).resolves.toBe('cancelled')
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenLastCalledWith(
+      0.018,
+      44,
+    )
+    expect(firstLfo?.gain.setValueAtTime).toHaveBeenLastCalledWith(0.004, 44)
+    expect(harness.graph.effects.gain.cancelScheduledValues).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(45)
+    expect(context.state).toBe('suspended')
+    context.currentTime = 45
+    await director.setPageVisible(true)
+    expect(context.resume).toHaveBeenCalledTimes(1)
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenLastCalledWith(
+      0.018,
+      45,
+    )
+    expect(internals.ambientLfoGain?.gain.setValueAtTime).toHaveBeenLastCalledWith(
+      0.004,
+      45,
+    )
+
+    const enabledCall = director.playDealerCall(
+      'round-14:enabled',
+      '庄家六点',
+    )
+    ;(speak.mock.calls[1][0] as MockSpeechSynthesisUtterance).onstart?.()
+    internals.duckAmbient(harness.graph, 0.7)
+    context.currentTime = 46
+    harness.graph.ambient.gain.setValueAtTime.mockClear()
+
+    director.setEnabled(false)
+    await expect(enabledCall).resolves.toBe('cancelled')
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenLastCalledWith(
+      0.018,
+      46,
+    )
+
+    await vi.advanceTimersByTimeAsync(45)
+    expect(context.state).toBe('suspended')
+    director.setEnabled(true)
+    context.currentTime = 47
+    await expect(director.unlock()).resolves.toBe(true)
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenLastCalledWith(
+      0.018,
+      47,
+    )
+    expect(internals.ambientLfoGain?.gain.setValueAtTime).toHaveBeenLastCalledWith(
+      0.004,
+      47,
+    )
+  })
+
+  it('does not reset an active envelope during a routine unlock', async () => {
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(50)
+    director.setEnabled(true)
+    const internals = director as unknown as {
+      ambientLfoGain: {
+        gain: ReturnType<typeof createAudioParam>
+      } | null
+      graph: typeof harness.graph
+      noiseBuffer: AudioBuffer
+      noiseBufferContext: AudioContext
+      preloadSamples(context: AudioContext): Promise<void>
+    }
+    internals.graph = harness.graph
+    internals.noiseBuffer = {} as AudioBuffer
+    internals.noiseBufferContext = harness.graph.context
+    internals.preloadSamples = vi.fn(async () => undefined)
+    await expect(director.unlock()).resolves.toBe(true)
+
+    const call = director.playDealerCall(
+      'round-15:release-envelope',
+      '庄家六点',
+    )
+    const utterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
+    utterance.onstart?.()
+    utterance.onend?.()
+    await expect(call).resolves.toBe('ended')
+    harness.graph.ambient.gain.cancelScheduledValues.mockClear()
+    internals.ambientLfoGain?.gain.cancelScheduledValues.mockClear()
+
+    director.setMixChannel('effects', 0.5)
+    director.setMixChannel('master', 0.5)
+    director.setMixChannel('voice', 0.5)
+    expect(
+      harness.graph.ambient.gain.cancelScheduledValues,
+    ).not.toHaveBeenCalled()
+    expect(
+      internals.ambientLfoGain?.gain.cancelScheduledValues,
+    ).not.toHaveBeenCalled()
+
+    await expect(director.unlock()).resolves.toBe(true)
+
+    expect(
+      harness.graph.ambient.gain.cancelScheduledValues,
+    ).not.toHaveBeenCalled()
+    expect(
+      internals.ambientLfoGain?.gain.cancelScheduledValues,
+    ).not.toHaveBeenCalled()
+  })
+
+  it('waits for the ambient envelope to settle before swapping in a sample', async () => {
+    vi.useFakeTimers()
+    createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(60)
+    const context = harness.graph.context as unknown as {
+      currentTime: number
+      state: AudioContextState
+      resume: ReturnType<typeof vi.fn>
+    }
+    context.resume.mockImplementation(async () => {
+      context.state = 'running'
+    })
+    director.setEnabled(true)
+    let finishLoad: ((buffer: AudioBuffer | null) => void) | undefined
+    const internals = director as unknown as {
+      duckAmbient(graph: typeof harness.graph, duration: number): void
+      graph: typeof harness.graph
+      loadSample(
+        context: AudioContext,
+        sampleId: 'room-crowd-loop',
+      ): Promise<AudioBuffer | null>
+      noiseBuffer: AudioBuffer
+      noiseBufferContext: AudioContext
+      sampleBuffers: Map<string, AudioBuffer>
+      startAmbient(): void
+    }
+    internals.graph = harness.graph
+    internals.noiseBuffer = {} as AudioBuffer
+    internals.noiseBufferContext = harness.graph.context
+    internals.loadSample = vi.fn(
+      () =>
+        new Promise<AudioBuffer | null>((resolve) => {
+          finishLoad = resolve
+        }),
+    )
+
+    internals.startAmbient()
+    internals.duckAmbient(harness.graph, 0.7)
+    const createBufferSource = harness.graph.context
+      .createBufferSource as unknown as ReturnType<typeof vi.fn>
+    const syntheticSource = createBufferSource.mock.results[0]
+      ?.value as ReturnType<typeof createAudioNode<{ stop: ReturnType<typeof vi.fn> }>>
+    const recordedRoom = {} as AudioBuffer
+    internals.sampleBuffers.set('room-crowd-loop', recordedRoom)
+    finishLoad?.(recordedRoom)
+    await Promise.resolve()
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(syntheticSource.stop).not.toHaveBeenCalled()
+
+    context.state = 'suspended'
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(syntheticSource.stop).not.toHaveBeenCalled()
+
+    context.currentTime = 60.7
+    await expect(director.unlock()).resolves.toBe(true)
+
+    expect(context.resume).toHaveBeenCalledTimes(1)
+    expect(syntheticSource.stop).toHaveBeenCalledTimes(1)
+    expect(createBufferSource.mock.results[1]?.value.buffer).toBe(recordedRoom)
   })
 })
 
