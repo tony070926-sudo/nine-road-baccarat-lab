@@ -39,6 +39,13 @@ test('completes a keyboard round without duplicate settlement @cross-browser', a
   await stubLeaderboardWrites(page)
   const runtimeErrors = collectRuntimeErrors(page)
   await openFreshTable(page)
+  await expect(page.locator('.card-back-static')).toHaveCount(0)
+  await expect(page.locator('.cards-row')).toHaveCount(2)
+  expect(
+    await page.locator('.cards-row').evaluateAll((rows) =>
+      rows.every((row) => row.children.length === 0),
+    ),
+  ).toBe(true)
   const before = await readStoredGame(page)
 
   await startPlayerRound(page)

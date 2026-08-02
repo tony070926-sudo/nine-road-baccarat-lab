@@ -87,6 +87,34 @@ function renderSettledHand(settledCardState: 'shown' | 'sweeping' | 'cleared') {
 }
 
 describe('RoundHand settled card lifecycle', () => {
+  it('keeps the felt physically empty before the opening deal begins', () => {
+    const markup = renderToStaticMarkup(
+      <RoundHand
+        side="player"
+        settledRound={null}
+        pendingRound={null}
+        roundReady
+        visibleCardIds={new Set()}
+        dealtCardIds={new Set()}
+        activeDealMotion={null}
+        completedCardIds={new Set()}
+        nextCardId={null}
+        nextCardRequiresUser={false}
+        flippingCardId={null}
+        revealActor={null}
+        pendingTotal={null}
+        onFlip={vi.fn()}
+        onFlipComplete={vi.fn()}
+        onDealComplete={vi.fn()}
+      />,
+    )
+
+    expect(markup).toContain('cards-row')
+    expect(markup).not.toContain('card-back-static')
+    expect(markup).not.toContain('reveal-card')
+    expect(markup).not.toContain('playing-card')
+  })
+
   it('exposes stable settled-card ids while shown or sweeping', () => {
     expect(renderSettledHand('shown')).toContain('data-table-card-id="p-1"')
     expect(renderSettledHand('sweeping')).toContain(

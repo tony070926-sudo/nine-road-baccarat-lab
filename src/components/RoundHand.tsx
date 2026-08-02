@@ -164,20 +164,7 @@ export function RoundHand({
               <PlayingCard card={card} index={index} />
             </span>
           ))
-        ) : (
-          <>
-            <div className="card-back card-back-static">
-              <span className="card-back-frame">
-                <span className="card-back-medallion">九</span>
-              </span>
-            </div>
-            <div className="card-back card-back-static">
-              <span className="card-back-frame">
-                <span className="card-back-medallion">九</span>
-              </span>
-            </div>
-          </>
-        )}
+        ) : null}
       </div>
 
       <div className="hand-tags">
