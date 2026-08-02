@@ -53,6 +53,7 @@ import {
 import { useMotionProfilePreference } from './app/useMotionProfilePreference'
 import { useInitialPointCall } from './app/useInitialPointCall'
 import { RoundPreludeCompletionGate } from './app/roundPreludeGate'
+import { beginLiveThirdCardDeal } from './app/thirdCardCallGate'
 import { resumeRestoredRoundProcedure, restoredRoundAnnouncement, restoredRoundPresentationState } from './app/useRestoredRoundProcedure'
 import { TableLeaseArbiter } from './app/tableLeaseArbiter'
 import { useTableRestoreLoop } from './app/useTableRestoreLoop'
@@ -564,6 +565,7 @@ function App() {
         finalizeRoundRef,
         motionProfile: effectiveMotionProfile,
         roundPreludeGate,
+        dealtCardIdsRef,
         beginInitialPointCall,
         startDealSequence,
         announce: setRevealAnnouncement,
@@ -1936,16 +1938,13 @@ function App() {
         [...dealtCardIdsRef.current],
       )
       if (newlyVisibleCards.length > 0) {
-        casinoAudio.playRoundOpen(`${current.id}:third-card-cue`)
-        casinoAudio.playDealerCall(
-          `${current.id}:dealer-call:third-card:${nextCount}`,
-          '补牌',
-        )
-        startDealSequence(
-          current,
-          newlyVisibleCards,
-          '荷官正在补发第三张牌，牌落桌后再继续开牌…',
-        )
+        beginLiveThirdCardDeal({
+          gate: roundPreludeGate, round: current, revealedCount: nextCount,
+          cardIds: newlyVisibleCards,
+          pendingRoundRef, revealedCountRef, dealtCardIdsRef,
+          activeDealMotionRef, dealQueueRef,
+          announce: setRevealAnnouncement, startDealSequence,
+        })
         return
       }
       flipLockRef.current = false

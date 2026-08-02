@@ -13,6 +13,10 @@ import {
 } from '../game/motionProfile'
 import type { PendingRound } from '../types'
 import type { RoundPreludeCompletionGate } from './roundPreludeGate'
+import {
+  thirdCardDealerCall,
+  thirdCardDealIsPending,
+} from './thirdCardCallGate'
 import { openingResultCall } from './tableUi'
 import type { BeginInitialPointCallInput } from './useInitialPointCall'
 
@@ -70,6 +74,7 @@ interface ResumeRestoredRoundProcedureInput {
   finalizeRoundRef: MutableRefObject<(roundId: string) => void>
   motionProfile: EffectiveMotionProfile
   roundPreludeGate: RoundPreludeCompletionGate
+  dealtCardIdsRef: MutableRefObject<Set<string>>
   beginInitialPointCall: (input: BeginInitialPointCallInput) => void
   startDealSequence: (
     round: PendingRound,
@@ -89,6 +94,7 @@ export function resumeRestoredRoundProcedure({
   finalizeRoundRef,
   motionProfile,
   roundPreludeGate,
+  dealtCardIdsRef,
   beginInitialPointCall,
   startDealSequence,
   announce,
@@ -113,16 +119,42 @@ export function resumeRestoredRoundProcedure({
       return
     const nextCard = nextRevealCard(active.result, restoredCount)
     if (!nextCard) return
+    const dealerCall = thirdCardDealerCall(active.result, nextCard.id)
+    if (!dealerCall) {
+      startDealSequence(
+        active,
+        [nextCard.id],
+        '恢复牌局：荷官正在重新补发尚未确认落桌的第三张牌…',
+      )
+      return
+    }
     casinoAudio.playRoundOpen(`${active.id}:third-card-cue`)
-    casinoAudio.playDealerCall(
-      `${active.id}:dealer-call:third-card:${restoredCount}`,
-      '补牌',
-    )
-    startDealSequence(
-      active,
-      [nextCard.id],
-      '恢复牌局：荷官正在重新补发尚未确认落桌的第三张牌…',
-    )
+    announce(`恢复牌局：荷官重新示意“${dealerCall}”，口令完成后再发牌。`)
+    roundPreludeGate.start({
+      dealerCall: casinoAudio.playDealerCall(
+        `${active.id}:dealer-call:third-card:${restoredCount}`,
+        dealerCall,
+      ),
+      visualDelayMs: 0,
+      canComplete: () =>
+        thirdCardDealIsPending({
+          round: pendingRoundRef.current,
+          roundId: active.id,
+          revealedCount: revealedCountRef.current,
+          expectedRevealedCount: restoredCount,
+          cardId: nextCard.id,
+          dealtCardIds: dealtCardIdsRef.current,
+        }),
+      onComplete: () => {
+        const current = pendingRoundRef.current
+        if (!current) return
+        startDealSequence(
+          current,
+          [nextCard.id],
+          `恢复牌局：荷官已宣读“${dealerCall}”，正在重新补发第三张牌…`,
+        )
+      },
+    })
   }
 
   if (restoredCount === 0) {

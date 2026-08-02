@@ -41,13 +41,26 @@ interface LocalTableWriteAudit {
   lastWriterId: string | null
 }
 
-function dealerControlledThirdCardEnvelope(
+function dealerControlledEnvelope({
+  seed,
+  suffix,
+  expectedPlayerCards,
+  expectedBankerCards,
   revealedCount = 0,
-): PersistedTableEnvelopeV2 {
+}: {
+  seed: number
+  suffix: string
+  expectedPlayerCards: number
+  expectedBankerCards: number
+  revealedCount?: number
+}): PersistedTableEnvelopeV2 {
   const game: PersistedGameState = {
     version: 1,
     balance: 10_000,
-    shoe: createShoe(createSeededRandomInt(7), 'S-DEALER-SPEECH-THIRD'),
+    shoe: createShoe(
+      createSeededRandomInt(seed),
+      `S-DEALER-SPEECH-${suffix}`,
+    ),
     history: [],
     lastBets: { ...EMPTY_BETS },
     sessionStartedAt: '2026-08-01T00:00:00.000Z',
@@ -58,28 +71,63 @@ function dealerControlledThirdCardEnvelope(
       bets: { ...EMPTY_BETS, player: 100 },
       playMode: 'bet',
       revealControl: 'dealer-reveal',
-      roundId: 'R-DEALER-SPEECH-THIRD',
+      roundId: `R-DEALER-SPEECH-${suffix}`,
     },
   )
   if (!prepared.pending) throw new Error('Seeded round was not prepared')
   if (
-    prepared.pending.result.playerCards.length !== 2 ||
-    prepared.pending.result.bankerCards.length !== 3
+    prepared.pending.result.playerCards.length !== expectedPlayerCards ||
+    prepared.pending.result.bankerCards.length !== expectedBankerCards
   ) {
-    throw new Error('Seeded round must require a Banker third card')
+    throw new Error(`Seeded ${suffix} round has an unexpected draw pattern`)
   }
 
   return {
     schemaVersion: 2,
     revision: 1,
-    commitId: 'C-DEALER-SPEECH-THIRD',
+    commitId: `C-DEALER-SPEECH-${suffix}`,
     updatedAt: '2026-08-01T00:00:00.000Z',
-    lastWriterId: 'W-DEALER-SPEECH-THIRD',
+    lastWriterId: `W-DEALER-SPEECH-${suffix}`,
     lastMutation: 'prepare-round',
     presentationPending: null,
     game: prepared.game,
     pending: { ...prepared.pending, revealedCount },
   } as PersistedTableEnvelopeV2
+}
+
+function dealerControlledThirdCardEnvelope(
+  revealedCount = 0,
+): PersistedTableEnvelopeV2 {
+  return dealerControlledEnvelope({
+    seed: 7,
+    suffix: 'THIRD',
+    expectedPlayerCards: 2,
+    expectedBankerCards: 3,
+    revealedCount,
+  })
+}
+
+function dealerControlledBothThirdCardsEnvelope(
+  revealedCount = 0,
+): PersistedTableEnvelopeV2 {
+  return dealerControlledEnvelope({
+    seed: 3,
+    suffix: 'BOTH-THIRD',
+    expectedPlayerCards: 3,
+    expectedBankerCards: 3,
+    revealedCount,
+  })
+}
+
+function freshDealerControlledBothThirdCardsEnvelope(): PersistedTableEnvelopeV2 {
+  const prepared = dealerControlledBothThirdCardsEnvelope()
+  return {
+    ...prepared,
+    commitId: 'C-DEALER-SPEECH-FRESH-BOTH-THIRD',
+    lastWriterId: 'W-DEALER-SPEECH-FRESH-BOTH-THIRD',
+    lastMutation: 'bootstrap',
+    pending: null,
+  }
 }
 
 function fullyRevealedSettlementEnvelope(): PersistedTableEnvelopeV2 {
@@ -688,6 +736,7 @@ test('replays the opening call and physical third-card deal after boundary recov
   page,
   browserName,
 }) => {
+  test.setTimeout(60_000)
   await stubLeaderboardWrites(page)
   const runtimeErrors = captureRuntimeErrors(page, browserName)
   await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -733,14 +782,20 @@ test('replays the opening call and physical third-card deal after boundary recov
     .poll(async () => (await readDealerSpeech(page)).calls.length)
     .toBe(2)
   const thirdCardSpeech = await readDealerSpeech(page)
-  expect(thirdCardSpeech.calls[1]).toBe('补牌')
-  expect(thirdCardSpeech.activeText).toBe('补牌')
+  expect(thirdCardSpeech.calls[1]).toBe('庄家补牌')
+  expect(thirdCardSpeech.activeText).toBe('庄家补牌')
+  await expect(recoveredThirdCard).toHaveClass(/is-waiting-deal/)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '4')
+  await page.waitForTimeout(240)
+  await expect(recoveredThirdCard).toHaveClass(/is-waiting-deal/)
+  expect((await readStoredPending(page))?.revealedCount).toBe(4)
+
+  await releaseCurrentDealerCall(page)
   await expect(recoveredThirdCard).toHaveClass(/is-being-dealt/)
   await expect(stage).toHaveAttribute('data-dealt-card-count', '5')
   await expect(recoveredThirdCard).toHaveClass(/is-placed/)
   expect((await readStoredPending(page))?.revealedCount).toBe(4)
 
-  await releaseCurrentDealerCall(page)
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect
@@ -795,6 +850,156 @@ test('replays the opening call and physical third-card deal after boundary recov
   expect(
     (await readDealerSpeech(page)).calls.filter((call) => call === '请下注'),
   ).toHaveLength(1)
+  expect(runtimeErrors).toEqual([])
+})
+
+test('resumes only the Banker call after a durable Player third card @cross-browser', async ({
+  page,
+  browserName,
+}) => {
+  await stubLeaderboardWrites(page)
+  const runtimeErrors = captureRuntimeErrors(page, browserName)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const envelope = dealerControlledBothThirdCardsEnvelope(5)
+  if (!envelope.pending)
+    throw new Error('Second third-card fixture has no pending round')
+  const bankerThirdCard = envelope.pending.result.bankerCards[2]
+  if (!bankerThirdCard)
+    throw new Error('Second third-card fixture has no Banker third card')
+  await installControlledDealerSpeech(page, envelope)
+  await page.goto('/')
+
+  const stage = page.locator('[data-table-phase]')
+  const bankerThirdCardElement = page.locator(
+    `[data-reveal-card-id="${bankerThirdCard.id}"]`,
+  )
+  await expect(stage).toBeVisible()
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(1)
+  const heldCall = await readDealerSpeech(page)
+  expect(heldCall.calls).toEqual(['庄家补牌'])
+  expect(heldCall.activeText).toBe('庄家补牌')
+  await expect(bankerThirdCardElement).toHaveClass(/is-waiting-deal/)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '5')
+  await page.waitForTimeout(180)
+  expect((await readStoredPending(page))?.revealedCount).toBe(5)
+  expect((await readStoredGame(page)).historyLength).toBe(0)
+
+  await releaseCurrentDealerCall(page)
+  await expect(bankerThirdCardElement).toHaveClass(/is-placed/)
+  await expect
+    .poll(async () => (await readStoredGame(page)).historyLength)
+    .toBe(1)
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(2)
+  const resultCall = await readDealerSpeech(page)
+  expect(resultCall.calls[1]).toMatch(
+    /^闲家 \d 点，庄家 \d 点，(?:庄家胜|闲家胜|和局)$/u,
+  )
+
+  await releaseCurrentDealerCall(page)
+  await finishRoundWithKeyboard(page, 1, 15_000)
+  expect(runtimeErrors).toEqual([])
+})
+
+test('serializes live Player and Banker third-card deals behind side-specific calls @cross-browser', async ({
+  page,
+  browserName,
+}) => {
+  test.setTimeout(60_000)
+  await stubLeaderboardWrites(page)
+  const runtimeErrors = captureRuntimeErrors(page, browserName)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const expectedRound = dealerControlledBothThirdCardsEnvelope()
+  if (!expectedRound.pending)
+    throw new Error('Live third-card fixture has no pending reference')
+  const playerThirdCard = expectedRound.pending.result.playerCards[2]
+  const bankerThirdCard = expectedRound.pending.result.bankerCards[2]
+  if (!playerThirdCard || !bankerThirdCard)
+    throw new Error('Live fixture must draw both third cards')
+  await installControlledDealerSpeech(
+    page,
+    freshDealerControlledBothThirdCardsEnvelope(),
+  )
+  await page.goto('/')
+
+  const stage = page.locator('[data-table-phase]')
+  await expect(stage).toBeVisible()
+  await page.locator('[data-bet-target="player"]').click()
+  await page.getByText('荷官开牌', { exact: true }).click()
+  await page.getByRole('button', { name: /确认下注/ }).click()
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(1)
+  expect((await readDealerSpeech(page)).activeText).toBe('停止下注')
+
+  await releaseCurrentDealerCall(page)
+  await expect
+    .poll(async () => (await readStoredPending(page))?.revealedCount)
+    .toBe(4)
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(2)
+  expect((await readDealerSpeech(page)).calls[1]).toMatch(
+    /^闲家 \d 点，庄家 \d 点/u,
+  )
+
+  const playerThirdCardElement = page.locator(
+    `[data-reveal-card-id="${playerThirdCard.id}"]`,
+  )
+  await expect(playerThirdCardElement).toHaveClass(/is-waiting-deal/)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '4')
+  await releaseCurrentDealerCall(page)
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(3)
+  const heldPlayerCall = await readDealerSpeech(page)
+  expect(heldPlayerCall.calls[2]).toBe('闲家补牌')
+  expect(heldPlayerCall.activeText).toBe('闲家补牌')
+  await page.waitForTimeout(180)
+  await expect(playerThirdCardElement).toHaveClass(/is-waiting-deal/)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '4')
+  expect((await readStoredPending(page))?.revealedCount).toBe(4)
+  expect((await readStoredGame(page)).historyLength).toBe(0)
+
+  await releaseCurrentDealerCall(page)
+  await expect(playerThirdCardElement).toHaveClass(/is-placed/)
+  await expect
+    .poll(async () => (await readStoredPending(page))?.revealedCount)
+    .toBe(5)
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(4)
+  const bankerThirdCardElement = page.locator(
+    `[data-reveal-card-id="${bankerThirdCard.id}"]`,
+  )
+  const heldBankerCall = await readDealerSpeech(page)
+  expect(heldBankerCall.calls[3]).toBe('庄家补牌')
+  expect(heldBankerCall.activeText).toBe('庄家补牌')
+  await expect(bankerThirdCardElement).toHaveClass(/is-waiting-deal/)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '5')
+  await page.waitForTimeout(180)
+  expect((await readStoredPending(page))?.revealedCount).toBe(5)
+  expect((await readStoredGame(page)).historyLength).toBe(0)
+
+  await releaseCurrentDealerCall(page)
+  await expect(bankerThirdCardElement).toHaveClass(/is-placed/)
+  await expect
+    .poll(async () => (await readStoredGame(page)).historyLength)
+    .toBe(1)
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(5)
+  const resultCall = await readDealerSpeech(page)
+  expect(resultCall.calls[4]).toMatch(
+    /^闲家 \d 点，庄家 \d 点，(?:庄家胜|闲家胜|和局)$/u,
+  )
+  expect(resultCall.activeText).toBe(resultCall.calls[4])
+
+  await releaseCurrentDealerCall(page)
+  await finishRoundWithKeyboard(page, 1, 15_000)
   expect(runtimeErrors).toEqual([])
 })
 
@@ -1183,9 +1388,17 @@ test('waits for the full initial point call before dealing a third card @cross-b
   await stubLeaderboardWrites(page)
   const runtimeErrors = captureRuntimeErrors(page, browserName)
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await installControlledDealerSpeech(page, dealerControlledThirdCardEnvelope(4))
+  const envelope = dealerControlledThirdCardEnvelope(4)
+  if (!envelope.pending) throw new Error('Point-call fixture has no pending round')
+  const thirdCard = envelope.pending.result.bankerCards[2]
+  if (!thirdCard) throw new Error('Point-call fixture has no Banker third card')
+  await installControlledDealerSpeech(page, envelope)
   await page.goto('/')
-  await expect(page.locator('[data-table-phase]')).toBeVisible()
+  const stage = page.locator('[data-table-phase]')
+  const thirdCardElement = page.locator(
+    `[data-reveal-card-id="${thirdCard.id}"]`,
+  )
+  await expect(stage).toBeVisible()
 
   await expect
     .poll(async () => (await readStoredPending(page))?.revealedCount)
@@ -1204,24 +1417,27 @@ test('waits for the full initial point call before dealing a third card @cross-b
     .poll(async () => (await readDealerSpeech(page)).calls.length)
     .toBe(2)
   const thirdCardSpeech = await readDealerSpeech(page)
-  expect(thirdCardSpeech.calls[1]).toBe('补牌')
-  expect(thirdCardSpeech.activeText).toBe('补牌')
+  expect(thirdCardSpeech.calls[1]).toBe('庄家补牌')
+  expect(thirdCardSpeech.activeText).toBe('庄家补牌')
   expect(thirdCardSpeech.cancelCount).toBe(0)
+  await expect(thirdCardElement).toHaveClass(/is-waiting-deal/)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '4')
+  await page.waitForTimeout(180)
+  expect((await readStoredPending(page))?.revealedCount).toBe(4)
+  expect((await readStoredGame(page)).historyLength).toBe(0)
 
+  await releaseCurrentDealerCall(page)
+  await expect(thirdCardElement).toHaveClass(/is-placed/)
   await expect
     .poll(async () => (await readStoredGame(page)).historyLength)
     .toBe(1)
   expect(await readStoredPending(page)).toBeNull()
-  expect((await readDealerSpeech(page)).calls).toHaveLength(2)
-  await expect(page.locator('[data-table-phase]')).not.toHaveAttribute(
+  await expect.poll(async () => (await readDealerSpeech(page)).calls.length).toBe(3)
+  await expect(stage).not.toHaveAttribute(
     'data-table-phase',
     'betting',
   )
 
-  await releaseCurrentDealerCall(page)
-  await expect
-    .poll(async () => (await readDealerSpeech(page)).calls.length)
-    .toBe(3)
   const resultSpeech = await readDealerSpeech(page)
   expect(resultSpeech.calls[2]).toMatch(
     /^闲家 \d 点，庄家 \d 点，(?:庄家胜|闲家胜|和局)$/u,
@@ -1254,7 +1470,7 @@ test('waits for the full initial point call before dealing a third card @cross-b
   const completedSpeech = await readDealerSpeech(page)
   expect(completedSpeech.calls).toHaveLength(4)
   expect(completedSpeech.calls[0]).toMatch(/^闲家 \d 点，庄家 \d 点/u)
-  expect(completedSpeech.calls).toContain('补牌')
+  expect(completedSpeech.calls).toContain('庄家补牌')
   expect(completedSpeech.calls[2]).toMatch(
     /^闲家 \d 点，庄家 \d 点，(?:庄家胜|闲家胜|和局)$/u,
   )
