@@ -4,6 +4,7 @@ import {
   NEXT_ROUND_HOLD_MS,
   ROAD_RECORD_HOLD_MS,
   cancelSettlementPresentationRuntime,
+  startCardSweepAudioRuntime,
   settlementPresentationHold,
   settlementPresentationCopy,
   settlementRecordIsVisible,
@@ -102,6 +103,37 @@ describe('settlement presentation timing', () => {
     expect(clearPresentation).toHaveBeenCalledOnce()
     expect(clearReadyRound).toHaveBeenCalledOnce()
     expect(onComplete).not.toHaveBeenCalled()
+  })
+
+  it('plays the card sweep only for the first accepted discard transition', () => {
+    const advancePresentation = vi
+      .fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false)
+    const playCardSweep = vi.fn()
+
+    expect(
+      startCardSweepAudioRuntime({
+        roundId: 'round-1',
+        advancePresentation,
+        playCardSweep,
+      }),
+    ).toBe(true)
+    expect(
+      startCardSweepAudioRuntime({
+        roundId: 'round-1',
+        advancePresentation,
+        playCardSweep,
+      }),
+    ).toBe(false)
+
+    expect(advancePresentation).toHaveBeenCalledTimes(2)
+    expect(advancePresentation).toHaveBeenCalledWith(
+      'round-1',
+      'discarding-cards',
+    )
+    expect(playCardSweep).toHaveBeenCalledOnce()
+    expect(playCardSweep).toHaveBeenCalledWith('round-1:card-sweep')
   })
 
   it('keeps the dealer call aligned with road and discard phases', () => {

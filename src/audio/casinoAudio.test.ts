@@ -1341,6 +1341,94 @@ describe('CasinoAudioDirector motion timing', () => {
     expect(harness.bufferStarts[0]).toBe(18)
   })
 
+  it('plays one decoded card shove on the effects bus for a discard sweep', async () => {
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(18.5)
+    installWebAudioHarness(director, harness.graph)
+    const sample = {} as AudioBuffer
+    const internals = director as unknown as {
+      sampleBufferContext: AudioContext
+      sampleBuffers: Map<string, AudioBuffer>
+    }
+    internals.sampleBufferContext = harness.graph.context
+    internals.sampleBuffers = new Map([
+      ['card-shove-1', sample],
+      ['card-shove-2', sample],
+    ])
+
+    director.playCardSweep('round-2:card-sweep')
+    director.playCardSweep('round-2:card-sweep')
+    await vi.waitFor(() => expect(harness.bufferStarts).toHaveLength(1))
+
+    expect(harness.bufferSources[0]?.buffer).toBe(sample)
+    expect(harness.bufferStarts[0]).toBe(18.5)
+    expect(harness.filters).toHaveLength(0)
+    expect(harness.oscillatorStarts).toHaveLength(0)
+    expect(harness.panners[0]?.pan.value).toBeGreaterThan(0)
+    expect(harness.panners[0]?.connect).toHaveBeenCalledWith(
+      harness.graph.effects,
+    )
+  })
+
+  it('uses a short paper-noise fallback when card shove samples are unavailable', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(19.5)
+    installWebAudioHarness(director, harness.graph)
+
+    director.playCardSweep('round-3:card-sweep')
+    await vi.waitFor(() => expect(harness.bufferStarts).toHaveLength(1))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    expect(harness.filters).toHaveLength(1)
+    expect(harness.filters[0]?.type).toBe('bandpass')
+    expect(harness.filters[0]?.frequency.value).toBe(1_350)
+    expect(harness.oscillatorStarts).toHaveLength(0)
+    expect(harness.panners[0]?.pan.value).toBeGreaterThan(0)
+    expect(harness.panners[0]?.connect).toHaveBeenCalledWith(
+      harness.graph.effects,
+    )
+  })
+
+  it('does not schedule a discard sweep while disabled, hidden, or muted', async () => {
+    const disabledDirector = new CasinoAudioDirector()
+    const disabledHarness = createWebAudioHarness(20)
+    const disabledInternals = disabledDirector as unknown as {
+      graph: typeof disabledHarness.graph
+      noiseBuffer: AudioBuffer
+    }
+    disabledInternals.graph = disabledHarness.graph
+    disabledInternals.noiseBuffer = {} as AudioBuffer
+    const disabledUnlock = vi
+      .spyOn(disabledDirector, 'unlock')
+      .mockResolvedValue(true)
+
+    disabledDirector.playCardSweep('round-4:card-sweep')
+    await Promise.resolve()
+    expect(disabledUnlock).not.toHaveBeenCalled()
+    expect(disabledHarness.bufferStarts).toHaveLength(0)
+
+    const hiddenDirector = new CasinoAudioDirector()
+    const hiddenHarness = createWebAudioHarness(21)
+    installWebAudioHarness(hiddenDirector, hiddenHarness.graph)
+    await hiddenDirector.setPageVisible(false)
+    hiddenDirector.playCardSweep('round-5:card-sweep')
+    await Promise.resolve()
+    expect(hiddenHarness.bufferStarts).toHaveLength(0)
+
+    const mutedDirector = new CasinoAudioDirector()
+    const mutedHarness = createWebAudioHarness(22)
+    installWebAudioHarness(mutedDirector, mutedHarness.graph)
+    mutedDirector.setMixChannel('effects', 0)
+    mutedDirector.playCardSweep('round-6:card-sweep')
+    await Promise.resolve()
+    expect(mutedHarness.bufferStarts).toHaveLength(0)
+  })
+
   it('retries failed recordings after the ten-minute offline interval', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(5_000)

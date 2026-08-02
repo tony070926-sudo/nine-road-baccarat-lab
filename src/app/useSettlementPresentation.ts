@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { casinoAudio } from '../audio/casinoAudio'
 import {
   cardSweepMotionDuration,
   createCardSweepMotionToken,
@@ -43,6 +44,15 @@ interface MutableValue<T> {
   current: T
 }
 
+interface StartCardSweepAudioRuntimeInput {
+  roundId: string
+  advancePresentation: (
+    roundId: string,
+    state: 'discarding-cards',
+  ) => boolean
+  playCardSweep: (eventId: string) => void
+}
+
 interface CancelSettlementPresentationRuntimeInput<T> {
   activeRef: MutableValue<T | null>
   timerRef: MutableValue<number | null>
@@ -71,6 +81,16 @@ export function cancelSettlementPresentationRuntime<T>({
   clearCardSweepMotion()
   clearPresentation()
   clearReadyRound()
+}
+
+export function startCardSweepAudioRuntime({
+  roundId,
+  advancePresentation,
+  playCardSweep,
+}: StartCardSweepAudioRuntimeInput): boolean {
+  if (!advancePresentation(roundId, 'discarding-cards')) return false
+  playCardSweep(`${roundId}:card-sweep`)
+  return true
 }
 
 export function settlementPresentationHold(
@@ -225,7 +245,11 @@ export function useSettlementPresentation(latestRoundId: string | null) {
         cardIds: active.cardIds,
         profile: active.profile,
       })
-      if (!advancePresentation(roundId, 'discarding-cards')) return
+      if (!startCardSweepAudioRuntime({
+        roundId,
+        advancePresentation,
+        playCardSweep: (eventId) => casinoAudio.playCardSweep(eventId),
+      })) return
       setCardSweepMotion(token)
       clearTimer()
       timerRef.current = window.setTimeout(() => {

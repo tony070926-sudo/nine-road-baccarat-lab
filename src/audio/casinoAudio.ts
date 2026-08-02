@@ -564,6 +564,28 @@ export class CasinoAudioDirector {
     })
   }
 
+  playCardSweep(eventId: string) {
+    if (this.mix.master === 0 || this.mix.effects === 0) return
+
+    this.schedule(eventId, (graph) => {
+      const now = graph.context.currentTime
+      const discardTrayPan = panForSide('banker') * 0.72
+      if (
+        this.playSample(
+          graph,
+          eventId,
+          CARD_SHOVE_SAMPLES,
+          now,
+          discardTrayPan,
+          0.17,
+        )
+      ) {
+        return
+      }
+      this.noiseBurst(graph, now, 0.16, 1_350, discardTrayPan, 0.045)
+    })
+  }
+
   playCrowd(
     eventId: string,
     tone: CrowdCheerTone,
