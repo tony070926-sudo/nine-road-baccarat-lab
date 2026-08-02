@@ -7,8 +7,12 @@ import {
   restoredDealtCardIds,
   revealIsComplete,
 } from '../game/reveal'
-import type { EffectiveMotionProfile } from '../game/motionProfile'
+import {
+  motionDuration,
+  type EffectiveMotionProfile,
+} from '../game/motionProfile'
 import type { PendingRound } from '../types'
+import type { RoundPreludeCompletionGate } from './roundPreludeGate'
 import { openingResultCall } from './tableUi'
 import type { BeginInitialPointCallInput } from './useInitialPointCall'
 
@@ -65,6 +69,7 @@ interface ResumeRestoredRoundProcedureInput {
   settleTimerRef: MutableRefObject<number | null>
   finalizeRoundRef: MutableRefObject<(roundId: string) => void>
   motionProfile: EffectiveMotionProfile
+  roundPreludeGate: RoundPreludeCompletionGate
   beginInitialPointCall: (input: BeginInitialPointCallInput) => void
   startDealSequence: (
     round: PendingRound,
@@ -83,6 +88,7 @@ export function resumeRestoredRoundProcedure({
   settleTimerRef,
   finalizeRoundRef,
   motionProfile,
+  roundPreludeGate,
   beginInitialPointCall,
   startDealSequence,
   announce,
@@ -120,7 +126,25 @@ export function resumeRestoredRoundProcedure({
   }
 
   if (restoredCount === 0) {
-    resumeOpeningDeal()
+    announce('恢复牌局：荷官重新示意停止下注后再发出四张开局牌。')
+    casinoAudio.playRoundOpen(`${restoredRound.id}:round-open:restored`)
+    roundPreludeGate.start({
+      dealerCall: casinoAudio.playDealerCall(
+        `${restoredRound.id}:dealer-call:no-more-bets:restored`,
+        '停止下注',
+      ),
+      visualDelayMs: Math.max(
+        20,
+        motionDuration(
+          restoredRound.playMode === 'fly' ? 540 : 720,
+          motionProfile,
+        ),
+      ),
+      canComplete: () =>
+        pendingRoundRef.current?.id === restoredRound.id &&
+        revealedCountRef.current === 0,
+      onComplete: resumeOpeningDeal,
+    })
     return
   }
 

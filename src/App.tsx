@@ -28,10 +28,7 @@ import {
   downloadHistoryCsv,
   downloadHistoryJson,
 } from './app/historyDownloads'
-import {
-  loadInitialSession,
-  pendingRoundFromPersisted,
-} from './app/tableSession'
+import { loadInitialSession, pendingRoundFromPersisted } from './app/tableSession'
 import { TableDealerHeader } from './app/TableDealerHeader'
 import { TableDealerProcedure } from './app/TableDealerProcedure'
 import type {
@@ -55,6 +52,7 @@ import {
 } from './app/tableUi'
 import { useMotionProfilePreference } from './app/useMotionProfilePreference'
 import { useInitialPointCall } from './app/useInitialPointCall'
+import { RoundPreludeCompletionGate } from './app/roundPreludeGate'
 import { resumeRestoredRoundProcedure, restoredRoundAnnouncement, restoredRoundPresentationState } from './app/useRestoredRoundProcedure'
 import { TableLeaseArbiter } from './app/tableLeaseArbiter'
 import { useTableRestoreLoop } from './app/useTableRestoreLoop'
@@ -347,8 +345,8 @@ function App() {
   const crowdCheerTimerRef = useRef<number | null>(null)
   const outcomeCheerTimerRef = useRef<number | null>(null)
   const outcomeMotionTimerRef = useRef<number | null>(null)
-  const roundPreludeTimerRef = useRef<number | null>(null)
   const roundPreludeRef = useRef<RoundPrelude | null>(null)
+  const [roundPreludeGate] = useState(() => new RoundPreludeCompletionGate())
   const newShoeMotionTimerRef = useRef<number | null>(null)
   const newShoeMotionRef = useRef<NewShoeMotion | null>(null)
   const settlementLockRef = useRef(Boolean(initialSession.presentationPending))
@@ -394,7 +392,8 @@ function App() {
   const displayedCanSqueeze = displayedBets.player > 0 || displayedBets.banker > 0
   const displayedWagerChipLedger =
     settlementWagerChipLedger ?? wagerChipLedger
-  const isLockingBets = roundPrelude !== null
+  const displayedRoundPrelude = roundPrelude ?? (pendingRound && revealedCount === 0 && dealtCardIds.size === 0 && !activeDealMotion ? { ...pendingRound, pending: pendingRound } : null)
+  const isLockingBets = displayedRoundPrelude !== null
 
   const replaceWagerChipLedger = (ledger: WagerChipLedger) => {
     wagerChipLedgerRef.current = ledger
@@ -414,6 +413,7 @@ function App() {
   function cancelRoundProcedure() {
     cancelInitialPointCall()
     cancelPresentation()
+    roundPreludeGate.cancel()
     for (const timerRef of [
       flipFallbackTimerRef,
       settleTimerRef,
@@ -422,7 +422,6 @@ function App() {
       crowdCheerTimerRef,
       outcomeCheerTimerRef,
       outcomeMotionTimerRef,
-      roundPreludeTimerRef,
       newShoeMotionTimerRef,
     ]) {
       if (timerRef.current !== null) window.clearTimeout(timerRef.current)
@@ -564,6 +563,7 @@ function App() {
         settleTimerRef,
         finalizeRoundRef,
         motionProfile: effectiveMotionProfile,
+        roundPreludeGate,
         beginInitialPointCall,
         startDealSequence,
         announce: setRevealAnnouncement,
@@ -635,17 +635,18 @@ function App() {
 
   useEffect(
     () => () => {
+      roundPreludeGate.cancel()
       for (const timerRef of [
         flipFallbackTimerRef, settleTimerRef, focusTimerRef, autoFlipTimerRef,
         crowdCheerTimerRef, outcomeCheerTimerRef, outcomeMotionTimerRef,
-        roundPreludeTimerRef, newShoeMotionTimerRef,
+        newShoeMotionTimerRef,
       ]) {
         if (timerRef.current !== null) window.clearTimeout(timerRef.current)
       }
       clearDealTimers()
       tableLease.release()
     },
-    [tableLease],
+    [roundPreludeGate, tableLease],
   )
 
   const { pointCallActive, physicalDealActive } =
@@ -666,7 +667,7 @@ function App() {
       ? 'settling'
     : newShoeMotion
       ? 'new-shoe'
-    : roundPrelude
+    : displayedRoundPrelude
       ? 'no-more-bets'
       : roundRequesting
         ? 'no-more-bets'
@@ -1386,7 +1387,6 @@ function App() {
       return
     }
 
-    roundPreludeTimerRef.current = null
     roundPreludeRef.current = null
     setRoundPrelude(null)
     try {
@@ -1476,20 +1476,19 @@ function App() {
           : '本局筹码已锁定。本局由你咪下注侧牌面。',
     )
     casinoAudio.playRoundOpen(`${intent.id}:round-open`)
-    casinoAudio.playDealerCall(
-      `${intent.id}:dealer-call:no-more-bets`,
-      '停止下注',
-    )
-
-    const reducedMotion = window.matchMedia(
-      '(prefers-reduced-motion: reduce)',
-    ).matches
-    roundPreludeTimerRef.current = window.setTimeout(
-      () => commitRound(intent),
-      reducedMotion
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    roundPreludeGate.start({
+      dealerCall: casinoAudio.playDealerCall(`${intent.id}:dealer-call:no-more-bets`, '停止下注'),
+      visualDelayMs: reducedMotion
         ? 20
         : scaledMotionDuration(intent.playMode === 'fly' ? 540 : 720, 20),
-    )
+      canComplete: () =>
+        roundPreludeRef.current?.id === intent.id &&
+        !pendingRoundRef.current &&
+        !settlementLockRef.current &&
+        !newShoeMotionRef.current,
+      onComplete: () => commitRound(intent),
+    })
 
     window.requestAnimationFrame(() => {
       document.querySelector('#game-table')?.scrollIntoView({
@@ -2630,7 +2629,7 @@ function App() {
                 settlementStatus={settlementProcedureStatus}
                 newShoeMotion={newShoeMotion}
                 roundRequesting={roundRequesting}
-                roundPrelude={roundPrelude}
+                roundPrelude={displayedRoundPrelude}
                 pendingRound={pendingRound}
                 pointCallActive={pointCallActive}
                 physicalDealActive={physicalDealActive}
@@ -2722,7 +2721,7 @@ function App() {
               </p>
 
               <TableDealerProcedure
-                pendingRound={pendingRound} roundPrelude={roundPrelude}
+                pendingRound={pendingRound} roundPrelude={displayedRoundPrelude}
                 settledRound={settledCurrentRound}
                 settlementPresentation={displayedSettlementPresentation}
                 revealedCount={revealedCount} dealtCardIds={dealtCardIds}

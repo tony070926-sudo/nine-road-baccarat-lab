@@ -445,6 +445,72 @@ async function releaseCurrentDealerCall(page: Page) {
   })
 }
 
+async function installOpeningDealAudit(page: Page) {
+  await page.evaluate(() => {
+    const auditWindow = window as typeof window & {
+      __openingDealAudit?: Array<{
+        cardId: string
+        dealIndex: number
+        sequence: number
+        side: 'player' | 'banker'
+      }>
+    }
+    auditWindow.__openingDealAudit = []
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        const target = mutation.target
+        if (!(target instanceof HTMLElement)) continue
+        const cardId = target.dataset.revealCardId
+        const sequence = Number(target.dataset.dealSequence)
+        const dealIndex = Number(target.dataset.dealIndex)
+        const side = target.closest('.hand-player')
+          ? 'player'
+          : target.closest('.hand-banker')
+            ? 'banker'
+            : null
+        if (
+          !cardId ||
+          !side ||
+          !Number.isSafeInteger(sequence) ||
+          !Number.isSafeInteger(dealIndex) ||
+          auditWindow.__openingDealAudit?.some(
+            (entry) => entry.sequence === sequence,
+          )
+        ) {
+          continue
+        }
+        auditWindow.__openingDealAudit?.push({
+          cardId,
+          dealIndex,
+          sequence,
+          side,
+        })
+      }
+    })
+    observer.observe(document.documentElement, {
+      attributeFilter: ['data-deal-sequence'],
+      attributes: true,
+      subtree: true,
+    })
+  })
+}
+
+async function readOpeningDealAudit(page: Page) {
+  return page.evaluate(
+    () =>
+      [
+        ...((window as typeof window & {
+          __openingDealAudit?: Array<{
+            cardId: string
+            dealIndex: number
+            sequence: number
+            side: 'player' | 'banker'
+          }>
+        }).__openingDealAudit ?? []),
+      ],
+  )
+}
+
 function captureRuntimeErrors(page: Page, browserName: string): string[] {
   const runtimeErrors: string[] = []
   page.on('pageerror', (error) => {
@@ -490,6 +556,106 @@ test('does not mistake clean betting hydration or audio toggles for a new openin
   await page.reload()
   await expect(stage).toHaveAttribute('data-table-phase', 'betting')
   expect((await readDealerSpeech(page)).calls).toEqual([])
+})
+
+test('holds the physical P/B/P/B opening until the no-more-bets call completes @cross-browser', async ({
+  page,
+}) => {
+  await stubLeaderboardWrites(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await installControlledDealerSpeech(page, completedSettlementEnvelope())
+  await page.goto('/')
+
+  const stage = page.locator('[data-table-phase]')
+  await expect(stage).toHaveAttribute('data-table-phase', 'betting')
+  await installOpeningDealAudit(page)
+  await page.locator('[data-bet-target="player"]').click()
+  await page.getByRole('button', { name: /确认下注/ }).click()
+
+  await expect(stage).toHaveAttribute('data-table-phase', 'no-more-bets')
+  await expect.poll(() => readStoredPending(page)).not.toBeNull()
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).activeText)
+    .toBe('停止下注')
+  for (const target of ['player', 'banker', 'tie']) {
+    await expect(page.locator(`[data-bet-target="${target}"]`)).toBeDisabled()
+  }
+
+  // Exceed the standard visual hold while deliberately keeping TTS unresolved.
+  await page.waitForTimeout(1_000)
+  await expect(stage).toHaveAttribute('data-table-phase', 'no-more-bets')
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '0')
+  expect(await readOpeningDealAudit(page)).toEqual([])
+
+  await releaseCurrentDealerCall(page)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '4', {
+    timeout: 15_000,
+  })
+
+  const openingDeal = await readOpeningDealAudit(page)
+  expect(openingDeal.map(({ dealIndex }) => dealIndex)).toEqual([0, 1, 2, 3])
+  expect(openingDeal.map(({ side }) => side)).toEqual([
+    'player',
+    'banker',
+    'player',
+    'banker',
+  ])
+})
+
+test('re-gates a prepared zero-card opening after reload @cross-browser', async ({
+  page,
+}) => {
+  await stubLeaderboardWrites(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await installControlledDealerSpeech(page, completedSettlementEnvelope())
+  await page.goto('/')
+
+  await page.locator('[data-bet-target="player"]').click()
+  await page.getByRole('button', { name: /确认下注/ }).click()
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).activeText)
+    .toBe('停止下注')
+  await expect.poll(() => readStoredPending(page)).not.toBeNull()
+
+  await page.reload()
+  const stage = page.locator('[data-table-phase]')
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).activeText)
+    .toBe('停止下注')
+  await expect(stage).toHaveAttribute('data-table-phase', 'no-more-bets')
+  await expect(page.locator('[data-dealer-procedure-track]')).toHaveAttribute(
+    'data-current-step-id',
+    'no-more-bets',
+  )
+  await page.waitForTimeout(1_000)
+  await expect(stage).toHaveAttribute('data-table-phase', 'no-more-bets')
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '0')
+  expect((await readStoredPending(page))?.revealedCount).toBe(0)
+
+  await releaseCurrentDealerCall(page)
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '4', {
+    timeout: 15_000,
+  })
+})
+
+test('does not deadlock the visual opening when table audio is muted', async ({
+  page,
+}) => {
+  await stubLeaderboardWrites(page)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await installControlledDealerSpeech(page, completedSettlementEnvelope())
+  await page.goto('/')
+
+  await page.getByRole('button', { name: '关闭牌桌空间音效' }).click()
+  await page.locator('[data-bet-target="player"]').click()
+  await page.getByRole('button', { name: /确认下注/ }).click()
+
+  const stage = page.locator('[data-table-phase]')
+  await expect(stage).toHaveAttribute('data-dealt-card-count', '4', {
+    timeout: 10_000,
+  })
+  expect((await readDealerSpeech(page)).calls).not.toContain('停止下注')
+  expect((await readStoredPending(page))?.revealedCount).toBe(0)
 })
 
 test('consumes a muted local opening without replaying it when audio is enabled', async ({
@@ -1017,14 +1183,14 @@ test('waits for the full initial point call before dealing a third card @cross-b
   await stubLeaderboardWrites(page)
   const runtimeErrors = captureRuntimeErrors(page, browserName)
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await installControlledDealerSpeech(page, dealerControlledThirdCardEnvelope())
+  await installControlledDealerSpeech(page, dealerControlledThirdCardEnvelope(4))
   await page.goto('/')
   await expect(page.locator('[data-table-phase]')).toBeVisible()
 
   await expect
     .poll(async () => (await readStoredPending(page))?.revealedCount)
     .toBe(4)
-  await expect(page.getByRole('status')).toContainText('荷官宣读开局点数')
+  await expect(page.getByRole('status')).toContainText(/荷官(?:重新)?宣读开局点数/u)
   await page.waitForTimeout(180)
   expect((await readStoredPending(page))?.revealedCount).toBe(4)
   expect((await readStoredGame(page)).historyLength).toBe(0)
