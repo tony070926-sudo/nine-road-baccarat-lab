@@ -18,12 +18,12 @@ import {
   displayedDurableSettlement,
   durableSettledCardState,
   durableSettlementSnapshotIntegrity,
-  focusFirstBetZone,
   initialDurableWagerLedger,
   projectDurableSettlement,
   startDurableSettlementPresentation,
   visibleCurrentShoeRecords,
 } from './app/durableSettlement'
+import { presentLocallyCompletedBettingOpen } from './app/bettingOpenDealerCall'
 import {
   downloadHistoryCsv,
   downloadHistoryJson,
@@ -1202,7 +1202,7 @@ function App() {
       setStorageReady(true)
       setFormError(null)
       releaseTableLease()
-      focusFirstBetZone()
+      presentLocallyCompletedBettingOpen(tableCoordinator, completion, roundId)
       return
     }
 

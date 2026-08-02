@@ -5,7 +5,11 @@ import {
   createShoe,
   settleBets,
 } from '../../src/game/baccarat'
-import { prepareRoundState } from '../../src/game/tableEngine'
+import {
+  completeSettlementPresentationState,
+  prepareRoundState,
+  settleRoundState,
+} from '../../src/game/tableEngine'
 import type { PersistedTableEnvelopeV2 } from '../../src/game/tableState'
 import type { PersistedGameState } from '../../src/types'
 import {
@@ -93,6 +97,30 @@ function fullyRevealedSettlementEnvelope(): PersistedTableEnvelopeV2 {
       revealedCount: envelope.pending.result.dealOrder.length,
     },
   } as PersistedTableEnvelopeV2
+}
+
+function completedSettlementEnvelope(): PersistedTableEnvelopeV2 {
+  const envelope = fullyRevealedSettlementEnvelope()
+  if (!envelope.pending)
+    throw new Error('Completed settlement fixture has no pending round')
+  const roundId = envelope.pending.id
+  const settled = settleRoundState(envelope, {
+    roundId,
+    settledAt: '2026-08-02T00:00:00.000Z',
+  })
+  const completed = completeSettlementPresentationState(settled.state, {
+    roundId,
+  })
+
+  return {
+    ...envelope,
+    ...completed,
+    revision: envelope.revision + 2,
+    commitId: 'C-DEALER-SPEECH-COMPLETED',
+    updatedAt: '2026-08-02T00:00:00.000Z',
+    lastWriterId: 'W-DEALER-SPEECH-COMPLETED',
+    lastMutation: 'complete-presentation',
+  }
 }
 
 async function installControlledDealerSpeech(
@@ -443,6 +471,53 @@ function captureRuntimeErrors(page: Page, browserName: string): string[] {
   return runtimeErrors
 }
 
+test('does not mistake clean betting hydration or audio toggles for a new opening', async ({
+  page,
+}) => {
+  await stubLeaderboardWrites(page)
+  await installControlledDealerSpeech(page, completedSettlementEnvelope())
+  await page.goto('/')
+
+  const stage = page.locator('[data-table-phase]')
+  await expect(stage).toHaveAttribute('data-table-phase', 'betting')
+  expect((await readDealerSpeech(page)).calls).toEqual([])
+
+  await page.getByRole('button', { name: '关闭牌桌空间音效' }).click()
+  await page.getByRole('button', { name: '开启牌桌空间音效' }).click()
+  await page.waitForTimeout(250)
+  expect((await readDealerSpeech(page)).calls).toEqual([])
+
+  await page.reload()
+  await expect(stage).toHaveAttribute('data-table-phase', 'betting')
+  expect((await readDealerSpeech(page)).calls).toEqual([])
+})
+
+test('consumes a muted local opening without replaying it when audio is enabled', async ({
+  page,
+}) => {
+  await stubLeaderboardWrites(page)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await installControlledDealerSpeech(page, fullyRevealedSettlementEnvelope())
+  await page.goto('/')
+
+  const stage = page.locator('[data-table-phase]')
+  await expect(stage).toHaveAttribute('data-table-phase', 'settling')
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).activeText)
+    .toMatch(/^(?:闲家|庄家)/u)
+
+  await page.getByRole('button', { name: '关闭牌桌空间音效' }).click()
+  await expect(stage).toHaveAttribute('data-table-phase', 'betting', {
+    timeout: 15_000,
+  })
+  await expect.poll(() => readStoredPresentationPending(page)).toBeNull()
+  expect((await readDealerSpeech(page)).calls).not.toContain('请下注')
+
+  await page.getByRole('button', { name: '开启牌桌空间音效' }).click()
+  await page.waitForTimeout(300)
+  expect((await readDealerSpeech(page)).calls).not.toContain('请下注')
+})
+
 test('replays the opening call and physical third-card deal after boundary recovery @cross-browser', async ({
   page,
   browserName,
@@ -517,6 +592,9 @@ test('replays the opening call and physical third-card deal after boundary recov
 
   await releaseCurrentDealerCall(page)
   await finishRoundWithKeyboard(page, 1, 15_000)
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(4)
   const expectedSettlement = settleBets(
     envelope.pending.bets,
     envelope.pending.result,
@@ -525,6 +603,8 @@ test('replays the opening call and physical third-card deal after boundary recov
     envelope.pending.balanceBefore + expectedSettlement.net
   const completedGame = await readStoredGame(page)
   const completedSpeech = await readDealerSpeech(page)
+  expect(completedSpeech.calls[3]).toBe('请下注')
+  expect(completedSpeech.activeText).toBe('请下注')
   expect(completedSpeech.cancelCount).toBe(0)
   expect(completedSpeech.settleWrites).toEqual([
     {
@@ -538,12 +618,17 @@ test('replays the opening call and physical third-card deal after boundary recov
     handNumber: envelope.pending.shoeAfter.handNumber,
     historyLength: 1,
   })
+  await expect(page.locator('[data-bet-target="player"]')).toBeEnabled()
+  await page.locator('[data-bet-target="player"]').click()
   await page.waitForTimeout(500)
   expect(await readStoredGame(page)).toEqual(completedGame)
   expect(await readStoredPending(page)).toBeNull()
   expect((await readDealerSpeech(page)).settleWrites).toEqual(
     completedSpeech.settleWrites,
   )
+  expect(
+    (await readDealerSpeech(page)).calls.filter((call) => call === '请下注'),
+  ).toHaveLength(1)
   expect(runtimeErrors).toEqual([])
 })
 
@@ -669,6 +754,9 @@ test('resumes durable settlement presentation after reload without settling twic
   await expect(stage).toHaveAttribute('data-table-phase', 'betting', {
     timeout: 15_000,
   })
+  await expect
+    .poll(async () => (await readDealerSpeech(page)).calls.length)
+    .toBe(2)
   for (const target of ['player', 'banker', 'tie']) {
     await expect(page.locator(`[data-bet-target="${target}"]`)).toBeEnabled()
   }
@@ -678,6 +766,11 @@ test('resumes durable settlement presentation after reload without settling twic
 
   const completedGame = await readStoredGame(page)
   const completedSpeech = await readDealerSpeech(page)
+  expect(completedSpeech.calls[0]).toMatch(
+    /^闲家 \d 点，庄家 \d 点，(?:庄家胜|闲家胜|和局)$/u,
+  )
+  expect(completedSpeech.calls[1]).toBe('请下注')
+  expect(completedSpeech.activeText).toBe('请下注')
   expect(completedGame).toEqual(settledGame)
   expect(await readStoredPending(page)).toBeNull()
   expect(completedSpeech.mutationWrites).toEqual([
@@ -708,6 +801,7 @@ test('resumes durable settlement presentation after reload without settling twic
   expect((await readDealerSpeech(page)).mutationWrites).toEqual(
     completedSpeech.mutationWrites,
   )
+  expect((await readDealerSpeech(page)).calls).toEqual(completedSpeech.calls)
   expect(runtimeErrors).toEqual([])
 })
 
@@ -787,6 +881,8 @@ test('keeps a passive tab read-only while the owner completes settlement', async
 
   const ownerCompleted = await readDealerSpeech(owner)
   const observerCompleted = await readDealerSpeech(observer)
+  expect(ownerCompleted.calls).toHaveLength(2)
+  expect(ownerCompleted.calls[1]).toBe('请下注')
   expect(ownerCompleted.localTableWrites.map(({ mutation }) => mutation)).toEqual([
     'settle-round',
     'complete-presentation',
@@ -856,6 +952,7 @@ test('keeps betting locked when the presentation marker disappears without an ex
     await expect(target).toBeDisabled()
   }
   const frozen = await readDealerSpeech(page)
+  expect(frozen.calls).not.toContain('请下注')
   expect(
     frozen.mutationWrites.filter(
       ({ mutation }) => mutation === 'complete-presentation',
@@ -908,6 +1005,7 @@ test('keeps betting locked when the presentation marker disappears without an ex
   for (const target of await page.locator('[data-bet-target]').all()) {
     await expect(target).toBeEnabled()
   }
+  expect((await readDealerSpeech(page)).calls).not.toContain('请下注')
   await externalWriter.close()
   expect(runtimeErrors).toEqual([])
 })
@@ -988,16 +1086,23 @@ test('waits for the full initial point call before dealing a third card @cross-b
   await page.waitForTimeout(350)
 
   const completedSpeech = await readDealerSpeech(page)
-  expect(completedSpeech.calls).toHaveLength(3)
+  expect(completedSpeech.calls).toHaveLength(4)
   expect(completedSpeech.calls[0]).toMatch(/^闲家 \d 点，庄家 \d 点/u)
   expect(completedSpeech.calls).toContain('补牌')
-  expect(completedSpeech.calls.at(-1)).toMatch(
+  expect(completedSpeech.calls[2]).toMatch(
     /^闲家 \d 点，庄家 \d 点，(?:庄家胜|闲家胜|和局)$/u,
   )
+  expect(completedSpeech.calls[3]).toBe('请下注')
+  expect(completedSpeech.activeText).toBe('请下注')
   expect(completedSpeech.cancelCount).toBe(0)
   expect((await readStoredGame(page)).historyLength).toBe(1)
   expect(await readStoredPending(page)).toBeNull()
   await expect(page.locator('.mini-result')).toHaveCount(1)
   await expect(page.locator('.road-result-cell')).toHaveCount(1)
+  await page.locator('[data-bet-target="player"]').click()
+  await page.waitForTimeout(200)
+  expect(
+    (await readDealerSpeech(page)).calls.filter((call) => call === '请下注'),
+  ).toHaveLength(1)
   expect(runtimeErrors).toEqual([])
 })
