@@ -80,8 +80,38 @@ function createAudioNode<T extends object>(extra: T) {
 
 function createWebAudioHarness(currentTime = 10) {
   const bufferStarts: number[] = []
+  const bufferSources: Array<
+    ReturnType<
+      typeof createAudioNode<{
+        buffer: AudioBuffer | null
+        loop: boolean
+        onended: (() => void) | null
+        playbackRate: ReturnType<typeof createAudioParam>
+        start: ReturnType<typeof vi.fn>
+        stop: ReturnType<typeof vi.fn>
+      }>
+    >
+  > = []
+  const filters: Array<
+    ReturnType<
+      typeof createAudioNode<{
+        frequency: ReturnType<typeof createAudioParam>
+        Q: ReturnType<typeof createAudioParam>
+        type: BiquadFilterType
+      }>
+    >
+  > = []
+  const gains: Array<
+    ReturnType<
+      typeof createAudioNode<{ gain: ReturnType<typeof createAudioParam> }>
+    >
+  > = []
   const oscillatorStarts: number[] = []
-  const panners: Array<{ pan: ReturnType<typeof createAudioParam> }> = []
+  const panners: Array<
+    ReturnType<
+      typeof createAudioNode<{ pan: ReturnType<typeof createAudioParam> }>
+    >
+  > = []
 
   const context = {
     currentTime,
@@ -91,25 +121,32 @@ function createWebAudioHarness(currentTime = 10) {
     createBuffer: vi.fn((_channels: number, length: number) => ({
       getChannelData: vi.fn(() => new Float32Array(length)),
     })),
-    createBiquadFilter: vi.fn(() =>
-      createAudioNode({
+    createBiquadFilter: vi.fn(() => {
+      const filter = createAudioNode({
         frequency: createAudioParam(),
         Q: createAudioParam(),
-        type: 'bandpass',
-      }),
-    ),
-    createBufferSource: vi.fn(() =>
-      createAudioNode({
+        type: 'bandpass' as BiquadFilterType,
+      })
+      filters.push(filter)
+      return filter
+    }),
+    createBufferSource: vi.fn(() => {
+      const source = createAudioNode({
         buffer: null,
         loop: false,
+        onended: null as (() => void) | null,
         playbackRate: createAudioParam(1),
         start: vi.fn((when = 0) => bufferStarts.push(when)),
         stop: vi.fn(),
-      }),
-    ),
-    createGain: vi.fn(() =>
-      createAudioNode({ gain: createAudioParam() }),
-    ),
+      })
+      bufferSources.push(source)
+      return source
+    }),
+    createGain: vi.fn(() => {
+      const gain = createAudioNode({ gain: createAudioParam() })
+      gains.push(gain)
+      return gain
+    }),
     createDynamicsCompressor: vi.fn(() =>
       createAudioNode({
         attack: createAudioParam(),
@@ -139,6 +176,7 @@ function createWebAudioHarness(currentTime = 10) {
   const master = createAudioNode({ gain: createAudioParam() })
   const effects = createAudioNode({ gain: createAudioParam() })
   const ambient = createAudioNode({ gain: createAudioParam() })
+  const crowd = createAudioNode({ gain: createAudioParam(0.54) })
   const voice = createAudioNode({ gain: createAudioParam() })
   const compressor = createAudioNode({})
   const graph = {
@@ -146,11 +184,20 @@ function createWebAudioHarness(currentTime = 10) {
     master,
     effects,
     ambient,
+    crowd,
     voice,
     compressor,
   }
 
-  return { bufferStarts, graph, oscillatorStarts, panners }
+  return {
+    bufferSources,
+    bufferStarts,
+    filters,
+    gains,
+    graph,
+    oscillatorStarts,
+    panners,
+  }
 }
 
 function installWebAudioHarness(
@@ -636,6 +683,309 @@ describe('CasinoAudioDirector dealer calls', () => {
   })
 })
 
+describe('CasinoAudioDirector far-field crowd', () => {
+  it('connects the constructed crowd bus to the shared compressor', async () => {
+    const harness = createWebAudioHarness(10)
+    const AudioContextMock = vi.fn(function AudioContextMock() {
+      return harness.graph.context
+    })
+    vi.stubGlobal('window', {
+      AudioContext: AudioContextMock,
+      localStorage: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(),
+      },
+    })
+    const director = new CasinoAudioDirector()
+    const internals = director as unknown as {
+      graph: typeof harness.graph
+      preloadSamples(context: AudioContext): Promise<void>
+    }
+    internals.preloadSamples = vi.fn(async () => undefined)
+    director.setEnabled(true)
+
+    await expect(director.unlock()).resolves.toBe(true)
+
+    expect(AudioContextMock).toHaveBeenCalledTimes(1)
+    expect(internals.graph.crowd.connect).toHaveBeenCalledWith(
+      internals.graph.compressor,
+    )
+    expect(internals.graph.crowd.connect).not.toHaveBeenCalledWith(
+      internals.graph.effects,
+    )
+  })
+
+  it.each([
+    ['reaction', 2],
+    ['anticipation', 2],
+    ['celebration', 3],
+  ] as const)(
+    'routes %s voices through the crowd bus instead of effects',
+    async (tone, expectedVoices) => {
+      const director = new CasinoAudioDirector()
+      const harness = createWebAudioHarness(12)
+      installWebAudioHarness(director, harness.graph)
+
+      director.playCrowd(`round-20:${tone}`, tone, 'player')
+      await vi.waitFor(() =>
+        expect(harness.bufferSources).toHaveLength(expectedVoices),
+      )
+
+      expect(harness.filters).toHaveLength(expectedVoices)
+      expect(harness.filters.every((filter) => filter.type === 'lowpass')).toBe(
+        true,
+      )
+      expect(
+        harness.filters.every(
+          (filter) =>
+            filter.frequency.value >= 720 &&
+            filter.frequency.value <= 1_650,
+        ),
+      ).toBe(true)
+      expect(harness.panners).toHaveLength(expectedVoices)
+      harness.panners.forEach((panner) => {
+        expect(panner.connect).toHaveBeenCalledWith(harness.graph.crowd)
+        expect(panner.connect).not.toHaveBeenCalledWith(harness.graph.effects)
+      })
+    },
+  )
+
+  it('uses a capped soft envelope and deterministic wide image once per event', async () => {
+    const firstDirector = new CasinoAudioDirector()
+    const first = createWebAudioHarness(14)
+    installWebAudioHarness(firstDirector, first.graph)
+
+    firstDirector.playCrowd('round-21:celebration', 'celebration', 'banker')
+    firstDirector.playCrowd('round-21:celebration', 'celebration', 'banker')
+    await vi.waitFor(() => expect(first.bufferSources).toHaveLength(3))
+
+    const pans = first.panners.map((panner) => panner.pan.value)
+    expect(Math.min(...pans)).toBeLessThan(-0.5)
+    expect(Math.max(...pans)).toBeGreaterThan(0.5)
+    first.gains.forEach((gain) => {
+      const [attack, release] = gain.gain.exponentialRampToValueAtTime.mock.calls
+      expect(attack?.[0]).toBeGreaterThan(0.0001)
+      expect(attack?.[0]).toBeLessThanOrEqual(0.034)
+      expect(attack?.[1]).toBeGreaterThanOrEqual(14.08)
+      expect(release?.[0]).toBe(0.0001)
+      expect(release?.[1] - (attack?.[1] ?? 0)).toBeGreaterThan(0.45)
+    })
+    first.bufferSources.forEach((source) => {
+      const offset = source.start.mock.calls[0]?.[1] as number
+      expect(offset).toBeGreaterThanOrEqual(0)
+      expect(offset).toBeLessThanOrEqual(0.18)
+    })
+
+    const secondDirector = new CasinoAudioDirector()
+    const second = createWebAudioHarness(14)
+    installWebAudioHarness(secondDirector, second.graph)
+    secondDirector.playCrowd(
+      'round-21:celebration',
+      'celebration',
+      'banker',
+    )
+    await vi.waitFor(() => expect(second.bufferSources).toHaveLength(3))
+
+    expect(second.panners.map((panner) => panner.pan.value)).toEqual(pans)
+  })
+
+  it('uses ambient mix independently from the effects mix', async () => {
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(16)
+    installWebAudioHarness(director, harness.graph)
+    harness.graph.crowd.gain.setValueAtTime.mockClear()
+
+    director.setMixChannel('effects', 0)
+    expect(harness.graph.effects.gain.setValueAtTime).toHaveBeenCalledWith(0, 16)
+    expect(harness.graph.crowd.gain.setValueAtTime).not.toHaveBeenCalled()
+
+    director.playCrowd('round-22:reaction', 'reaction', 'player')
+    await vi.waitFor(() => expect(harness.bufferSources).toHaveLength(2))
+    expect(
+      harness.panners.every((panner) =>
+        panner.connect.mock.calls.some(([destination]) =>
+          Object.is(destination, harness.graph.crowd),
+        ),
+      ),
+    ).toBe(true)
+
+    harness.graph.effects.gain.setValueAtTime.mockClear()
+    director.setMixChannel('ambient', 0)
+    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenCalledWith(0, 16)
+    expect(harness.graph.crowd.gain.setValueAtTime).toHaveBeenCalledWith(0, 16)
+    expect(harness.graph.effects.gain.setValueAtTime).not.toHaveBeenCalled()
+  })
+
+  it('turns hush into a bounded ambient dip without creating a noise source', async () => {
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(24)
+    installWebAudioHarness(director, harness.graph)
+
+    director.playCrowd('round-23:hush', 'hush', 'banker')
+    await vi.waitFor(() =>
+      expect(
+        harness.graph.ambient.gain.linearRampToValueAtTime,
+      ).toHaveBeenCalled(),
+    )
+
+    expect(harness.bufferSources).toHaveLength(0)
+    expect(harness.filters).toHaveLength(0)
+    expect(harness.gains).toHaveLength(0)
+    expect(harness.panners).toHaveLength(0)
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      expect.closeTo(0.007, 10),
+      24.025,
+    )
+    expect(harness.graph.ambient.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.018,
+      24.72,
+    )
+    expect(harness.graph.crowd.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      expect.closeTo(0.21, 10),
+      24.025,
+    )
+    expect(harness.graph.crowd.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.54,
+      24.72,
+    )
+    expect(harness.graph.effects.gain.cancelScheduledValues).not.toHaveBeenCalled()
+  })
+
+  it('does not shorten an existing transient or release past dealer ducking', async () => {
+    const { speak } = createSpeechHarness()
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(30)
+    installWebAudioHarness(director, harness.graph)
+    const internals = director as unknown as {
+      ambientTransientDuck: { until: number } | null
+      duckAmbient(graph: typeof harness.graph, duration: number): void
+    }
+
+    internals.duckAmbient(harness.graph, 1.2)
+    director.playCrowd('round-24:hush', 'hush', 'player')
+    await vi.waitFor(() =>
+      expect(internals.ambientTransientDuck?.until).toBe(31.2),
+    )
+
+    const call = director.playDealerCall('round-24:dealer', '庄家六点')
+    const utterance = speak.mock.calls[0][0] as MockSpeechSynthesisUtterance
+    utterance.onstart?.()
+    ;(harness.graph.context as unknown as { currentTime: number }).currentTime =
+      30.2
+    harness.graph.crowd.gain.linearRampToValueAtTime.mockClear()
+    utterance.onend?.()
+    await expect(call).resolves.toBe('ended')
+
+    expect(harness.graph.crowd.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      expect.closeTo(0.21, 10),
+      30.2 + DEALER_VOICE_DUCK_RELEASE_S,
+    )
+    expect(harness.graph.crowd.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.54,
+      31.2,
+    )
+    expect(internals.ambientTransientDuck?.until).toBe(31.2)
+  })
+
+  it('removes and disconnects a crowd voice after its natural end', async () => {
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(34)
+    installWebAudioHarness(director, harness.graph)
+    const internals = director as unknown as {
+      activeCrowdVoices: Set<unknown>
+    }
+
+    director.playCrowd('round-24:natural-end', 'reaction', 'player')
+    await vi.waitFor(() => expect(harness.bufferSources).toHaveLength(2))
+    expect(internals.activeCrowdVoices.size).toBe(2)
+
+    const source = harness.bufferSources[0]
+    source.stop.mockClear()
+    source.onended?.()
+
+    expect(internals.activeCrowdVoices.size).toBe(1)
+    expect(source.onended).toBeNull()
+    expect(source.stop).not.toHaveBeenCalled()
+    expect(source.disconnect).toHaveBeenCalledTimes(1)
+    expect(harness.filters[0]?.disconnect).toHaveBeenCalledTimes(1)
+    expect(harness.gains[0]?.disconnect).toHaveBeenCalledTimes(1)
+    expect(harness.panners[0]?.disconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops active crowd nodes and blocks new ones while hidden or disabled', async () => {
+    const director = new CasinoAudioDirector()
+    const harness = createWebAudioHarness(36)
+
+    director.playCrowd('round-25:disabled', 'celebration', 'player')
+    await Promise.resolve()
+    expect(harness.bufferSources).toHaveLength(0)
+
+    installWebAudioHarness(director, harness.graph)
+    const internals = director as unknown as {
+      activeCrowdVoices: Set<unknown>
+    }
+    director.playCrowd('round-25:visible', 'celebration', 'banker')
+    await vi.waitFor(() => expect(harness.bufferSources).toHaveLength(3))
+    expect(internals.activeCrowdVoices.size).toBe(3)
+    harness.bufferSources.forEach((source) => {
+      source.stop.mockClear()
+      source.disconnect.mockClear()
+    })
+    harness.graph.master.gain.linearRampToValueAtTime.mockClear()
+
+    await director.setPageVisible(false)
+    expect(internals.activeCrowdVoices.size).toBe(3)
+    expect(harness.graph.master.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0,
+      36.035,
+    )
+    harness.bufferSources.forEach((source, index) => {
+      expect(source.stop).toHaveBeenCalledTimes(1)
+      expect(source.stop).toHaveBeenCalledWith(36.04)
+      expect(source.disconnect).not.toHaveBeenCalled()
+      expect(harness.gains[index]?.gain.cancelAndHoldAtTime).toHaveBeenCalledWith(
+        36,
+      )
+      expect(
+        harness.gains[index]?.gain.linearRampToValueAtTime,
+      ).toHaveBeenCalledWith(0.0001, 36.035)
+      source.onended?.()
+      expect(source.onended).toBeNull()
+    })
+    expect(internals.activeCrowdVoices.size).toBe(0)
+    harness.bufferSources.forEach((source) => {
+      expect(source.disconnect).toHaveBeenCalledTimes(1)
+    })
+    director.playCrowd('round-25:hidden', 'celebration', 'banker')
+    await Promise.resolve()
+    expect(harness.bufferSources).toHaveLength(3)
+
+    await director.setPageVisible(true)
+    director.playCrowd('round-25:visible-again', 'reaction', 'player')
+    await vi.waitFor(() => expect(harness.bufferSources).toHaveLength(5))
+    const activeAfterResume = harness.bufferSources.slice(3)
+    activeAfterResume.forEach((source) => {
+      source.stop.mockClear()
+      source.disconnect.mockClear()
+    })
+    director.setEnabled(false)
+    expect(internals.activeCrowdVoices.size).toBe(2)
+    activeAfterResume.forEach((source, index) => {
+      expect(source.stop).toHaveBeenCalledTimes(1)
+      expect(source.disconnect).not.toHaveBeenCalled()
+      expect(
+        harness.gains[index + 3]?.gain.linearRampToValueAtTime,
+      ).toHaveBeenCalledWith(0.0001, 36.035)
+      source.onended?.()
+      expect(source.onended).toBeNull()
+    })
+    expect(internals.activeCrowdVoices.size).toBe(0)
+    activeAfterResume.forEach((source) => {
+      expect(source.disconnect).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
 describe('CasinoAudioDirector persistent mix', () => {
   it('loads a validated four-channel mix and persists bounded updates', () => {
     const localStorage = {
@@ -774,16 +1124,20 @@ describe('CasinoAudioDirector persistent mix', () => {
     ;(speak.mock.calls[0][0] as MockSpeechSynthesisUtterance).onstart?.()
     internals.duckAmbient(harness.graph, 0.7)
     harness.graph.ambient.gain.setValueAtTime.mockClear()
+    harness.graph.crowd.gain.setValueAtTime.mockClear()
     firstLfo?.gain.setValueAtTime.mockClear()
     harness.graph.effects.gain.cancelScheduledValues.mockClear()
+    harness.graph.master.gain.linearRampToValueAtTime.mockClear()
 
     await director.setPageVisible(false)
     await expect(visibleCall).resolves.toBe('cancelled')
-    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenLastCalledWith(
-      0.018,
-      44,
+    expect(harness.graph.ambient.gain.setValueAtTime).not.toHaveBeenCalled()
+    expect(harness.graph.crowd.gain.setValueAtTime).not.toHaveBeenCalled()
+    expect(firstLfo?.gain.setValueAtTime).not.toHaveBeenCalled()
+    expect(harness.graph.master.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0,
+      44.035,
     )
-    expect(firstLfo?.gain.setValueAtTime).toHaveBeenLastCalledWith(0.004, 44)
     expect(harness.graph.effects.gain.cancelScheduledValues).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(45)
@@ -808,13 +1162,12 @@ describe('CasinoAudioDirector persistent mix', () => {
     internals.duckAmbient(harness.graph, 0.7)
     context.currentTime = 46
     harness.graph.ambient.gain.setValueAtTime.mockClear()
+    harness.graph.crowd.gain.setValueAtTime.mockClear()
 
     director.setEnabled(false)
     await expect(enabledCall).resolves.toBe('cancelled')
-    expect(harness.graph.ambient.gain.setValueAtTime).toHaveBeenLastCalledWith(
-      0.018,
-      46,
-    )
+    expect(harness.graph.ambient.gain.setValueAtTime).not.toHaveBeenCalled()
+    expect(harness.graph.crowd.gain.setValueAtTime).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(45)
     expect(context.state).toBe('suspended')
@@ -1158,6 +1511,15 @@ describe('CasinoAudioDirector motion timing', () => {
     const director = new CasinoAudioDirector()
     const closedHarness = createWebAudioHarness(8)
     const replacementHarness = createWebAudioHarness(40)
+    const staleCrowdSource = closedHarness.graph.context.createBufferSource()
+    const staleCrowdGain = closedHarness.graph.context.createGain()
+    const staleCrowdVoice = {
+      context: closedHarness.graph.context,
+      source: staleCrowdSource,
+      gain: staleCrowdGain,
+      nodes: [staleCrowdSource, staleCrowdGain],
+      cleanupTimer: null,
+    }
     ;(
       closedHarness.graph.context as unknown as { state: AudioContextState }
     ).state = 'closed'
@@ -1175,11 +1537,13 @@ describe('CasinoAudioDirector motion timing', () => {
 
     director.setEnabled(true)
     const internals = director as unknown as {
+      activeCrowdVoices: Set<typeof staleCrowdVoice>
       graph: typeof closedHarness.graph
       noiseBuffer: AudioBuffer | null
     }
     internals.graph = closedHarness.graph
     internals.noiseBuffer = staleNoise
+    internals.activeCrowdVoices.add(staleCrowdVoice)
 
     await expect(director.unlock()).resolves.toBe(true)
 
@@ -1189,6 +1553,11 @@ describe('CasinoAudioDirector motion timing', () => {
     expect(
       replacementHarness.graph.context.createBuffer,
     ).toHaveBeenCalledTimes(1)
+    expect(internals.activeCrowdVoices.size).toBe(0)
+    expect(staleCrowdSource.stop).toHaveBeenCalledTimes(1)
+    expect(staleCrowdSource.disconnect).toHaveBeenCalledTimes(1)
+    expect(staleCrowdGain.disconnect).toHaveBeenCalledTimes(1)
+    expect(closedHarness.graph.crowd.disconnect).toHaveBeenCalledTimes(1)
     expect(closedHarness.graph.master.disconnect).toHaveBeenCalledTimes(1)
   })
 })

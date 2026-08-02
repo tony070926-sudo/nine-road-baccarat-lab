@@ -24,6 +24,10 @@ import {
 const SOUND_PREFERENCE_KEY = 'nine-road-baccarat:table-audio'
 const AUDIO_MIX_KEY = 'nine-road-baccarat:audio-mix-v1'
 const AMBIENT_LEVEL = 0.018
+const CROWD_BUS_LEVEL = 0.54
+const CROWD_MAX_PRE_GAIN = 0.034
+const CROWD_HUSH_DUCK_S = 0.72
+const CROWD_LIFECYCLE_FADE_S = 0.035
 const MASTER_LEVEL = 0.72
 const MAX_EVENT_IDS = 128
 export const AUDIO_SAMPLE_RETRY_MS = 600_000
@@ -163,6 +167,7 @@ interface AudioGraph {
   master: GainNode
   effects: GainNode
   ambient: GainNode
+  crowd: GainNode
   voice: GainNode
   compressor: DynamicsCompressorNode
 }
@@ -172,6 +177,14 @@ interface AmbientSourceReplacement {
   source: AudioBufferSourceNode
   buffer: AudioBuffer
   timer: ReturnType<typeof globalThis.setTimeout> | null
+}
+
+interface ActiveCrowdVoice {
+  context: AudioContext
+  source: AudioBufferSourceNode
+  gain: GainNode
+  nodes: AudioNode[]
+  cleanupTimer: ReturnType<typeof globalThis.setTimeout> | null
 }
 
 export class CasinoAudioDirector {
@@ -198,6 +211,7 @@ export class CasinoAudioDirector {
   private ambientEnvelopeContext: AudioContext | null = null
   private ambientEnvelopeSettlesAt = 0
   private ambientSourceReplacement: AmbientSourceReplacement | null = null
+  private activeCrowdVoices = new Set<ActiveCrowdVoice>()
   private dealerCallPromises = new Map<
     string,
     Promise<DealerCallCompletion>
@@ -215,8 +229,10 @@ export class CasinoAudioDirector {
       return
     }
     if (!enabled) {
+      this.fadeMaster(0)
+      this.fadeCrowdVoices()
+      this.clearAmbientDuckingState()
       this.cancelDealerCalls()
-      this.resetAmbientDuckingImmediately()
     }
 
     this.enabled = enabled
@@ -224,7 +240,6 @@ export class CasinoAudioDirector {
     saveAudioPreference(enabled)
 
     if (!enabled) {
-      this.fadeMaster(0)
       this.stopAmbient()
       this.scheduleSuspend(this.lifecycleEpoch)
     } else {
@@ -347,8 +362,10 @@ export class CasinoAudioDirector {
   async setPageVisible(visible: boolean) {
     if (this.pageVisible === visible) return
     if (!visible) {
+      this.fadeMaster(0)
+      this.fadeCrowdVoices()
+      this.clearAmbientDuckingState()
       this.cancelDealerCalls()
-      this.resetAmbientDuckingImmediately()
     }
 
     this.pageVisible = visible
@@ -357,7 +374,6 @@ export class CasinoAudioDirector {
     if (!graph) return
 
     if (!visible) {
-      this.fadeMaster(0)
       this.stopAmbient()
       this.scheduleSuspend(this.lifecycleEpoch)
       return
@@ -554,19 +570,31 @@ export class CasinoAudioDirector {
     side: Exclude<AudioSide, 'center'>,
   ) {
     this.schedule(eventId, (graph) => {
+      if (tone === 'hush') {
+        this.duckAmbient(graph, CROWD_HUSH_DUCK_S)
+        return
+      }
+
       const intensity = crowdIntensity(tone)
       const now = graph.context.currentTime
-      const basePan = panForSide(side)
-      const voices = tone === 'celebration' ? 4 : tone === 'hush' ? 1 : 3
+      const voices = tone === 'celebration' ? 3 : 2
+      const centerOffset =
+        (this.stableCrowdUnit(eventId) - 0.5) * 0.14 +
+        panForSide(side) * 0.12
+      const spread = voices === 3 ? [-0.68, 0, 0.68] : [-0.52, 0.52]
 
       for (let index = 0; index < voices; index += 1) {
-        this.noiseBurst(
+        this.crowdVoice(
           graph,
           now + index * 0.055,
-          0.18 + index * 0.035,
-          420 + index * 95,
-          Math.max(-0.9, Math.min(0.9, basePan + (index - 1) * 0.12)),
-          0.028 * intensity,
+          0.58 + intensity * 0.3 + index * 0.045,
+          1_050 + intensity * 420 + index * 70,
+          Math.max(-0.86, Math.min(0.86, spread[index] + centerOffset)),
+          Math.min(
+            CROWD_MAX_PRE_GAIN,
+            CROWD_MAX_PRE_GAIN * intensity * (1 - index * 0.1),
+          ),
+          this.stableCrowdUnit(`${eventId}:${index}`) * 0.18,
         )
       }
     })
@@ -978,10 +1006,12 @@ export class CasinoAudioDirector {
         this.ambientEnvelopeContext = null
         this.ambientEnvelopeSettlesAt = 0
       }
+      this.stopCrowdVoices(closedGraph.context)
       this.stopAmbient()
       ;[
         closedGraph.effects,
         closedGraph.ambient,
+        closedGraph.crowd,
         closedGraph.voice,
         closedGraph.compressor,
         closedGraph.master,
@@ -1020,11 +1050,13 @@ export class CasinoAudioDirector {
     const master = context.createGain()
     const effects = context.createGain()
     const ambient = context.createGain()
+    const crowd = context.createGain()
     const voice = context.createGain()
     const compressor = context.createDynamicsCompressor()
     master.gain.value = 0
     effects.gain.value = MASTER_LEVEL * this.mix.effects
     ambient.gain.value = this.ambientSustainedTargetLevel()
+    crowd.gain.value = this.crowdSustainedTargetLevel()
     voice.gain.value = MASTER_LEVEL * this.mix.voice
     compressor.threshold.value = -16
     compressor.knee.value = 14
@@ -1033,10 +1065,19 @@ export class CasinoAudioDirector {
     compressor.release.value = 0.18
     effects.connect(compressor)
     ambient.connect(compressor)
+    crowd.connect(compressor)
     voice.connect(compressor)
     compressor.connect(master)
     master.connect(context.destination)
-    this.graph = { context, master, effects, ambient, voice, compressor }
+    this.graph = {
+      context,
+      master,
+      effects,
+      ambient,
+      crowd,
+      voice,
+      compressor,
+    }
     return this.graph
   }
 
@@ -1351,6 +1392,70 @@ export class CasinoAudioDirector {
     this.ambientLfoGain = null
   }
 
+  private releaseCrowdVoice(voice: ActiveCrowdVoice, stop: boolean) {
+    if (!this.activeCrowdVoices.delete(voice)) return
+    voice.source.onended = null
+    if (voice.cleanupTimer !== null) {
+      globalThis.clearTimeout(voice.cleanupTimer)
+      voice.cleanupTimer = null
+    }
+    if (stop) {
+      try {
+        voice.source.stop()
+      } catch {
+        // The source may already have ended or its context may be closed.
+      }
+    }
+    voice.nodes.forEach((node) => {
+      try {
+        node.disconnect()
+      } catch {
+        // Closed contexts can reject redundant disconnect operations.
+      }
+    })
+  }
+
+  private stopCrowdVoices(context?: AudioContext) {
+    ;[...this.activeCrowdVoices]
+      .filter((voice) => !context || voice.context === context)
+      .forEach((voice) => this.releaseCrowdVoice(voice, true))
+  }
+
+  private fadeCrowdVoices() {
+    this.activeCrowdVoices.forEach((voice) => {
+      if (voice.cleanupTimer !== null) return
+      if (voice.context.state === 'closed') {
+        this.releaseCrowdVoice(voice, true)
+        return
+      }
+
+      const now = voice.context.currentTime
+      const fadeEnd = now + CROWD_LIFECYCLE_FADE_S
+      const parameter = voice.gain.gain
+      const heldValue = parameter.value
+      if (typeof parameter.cancelAndHoldAtTime === 'function') {
+        parameter.cancelAndHoldAtTime(now)
+      } else {
+        parameter.cancelScheduledValues(now)
+        parameter.setValueAtTime(heldValue, now)
+      }
+      parameter.linearRampToValueAtTime(0.0001, fadeEnd)
+      try {
+        voice.source.stop(fadeEnd + 0.005)
+      } catch {
+        this.releaseCrowdVoice(voice, true)
+        return
+      }
+      voice.cleanupTimer = globalThis.setTimeout(
+        () => this.releaseCrowdVoice(voice, true),
+        Math.ceil((CROWD_LIFECYCLE_FADE_S + 0.025) * 1_000),
+      )
+      ;(
+        voice.cleanupTimer as unknown as { unref?: () => void }
+      ).unref?.()
+    })
+  }
+
   private cancelSuspend() {
     if (this.suspendTimer === null) return
     window.clearTimeout(this.suspendTimer)
@@ -1426,6 +1531,10 @@ export class CasinoAudioDirector {
     return 0.004 * this.mix.ambient
   }
 
+  private crowdBaseLevel() {
+    return CROWD_BUS_LEVEL * this.mix.ambient
+  }
+
   private ambientSustainedTargetLevel() {
     return (
       this.ambientBaseLevel() *
@@ -1436,6 +1545,13 @@ export class CasinoAudioDirector {
   private ambientLfoSustainedTargetLevel() {
     return (
       this.ambientLfoBaseLevel() *
+      (this.dealerVoiceDucking ? DEALER_VOICE_DUCK_RATIO : 1)
+    )
+  }
+
+  private crowdSustainedTargetLevel() {
+    return (
+      this.crowdBaseLevel() *
       (this.dealerVoiceDucking ? DEALER_VOICE_DUCK_RATIO : 1)
     )
   }
@@ -1456,6 +1572,13 @@ export class CasinoAudioDirector {
     return Math.min(
       this.ambientLfoSustainedTargetLevel(),
       this.ambientLfoBaseLevel() * this.ambientTransientRatio(),
+    )
+  }
+
+  private crowdTransientTargetLevel() {
+    return Math.min(
+      this.crowdSustainedTargetLevel(),
+      this.crowdBaseLevel() * this.ambientTransientRatio(),
     )
   }
 
@@ -1491,12 +1614,16 @@ export class CasinoAudioDirector {
       transient !== null && transient.until > transitionEnd
     const ambientSustained = this.ambientSustainedTargetLevel()
     const ambientLfoSustained = this.ambientLfoSustainedTargetLevel()
+    const crowdSustained = this.crowdSustainedTargetLevel()
     const ambientTarget = transientContinues
       ? this.ambientTransientTargetLevel()
       : ambientSustained
     const ambientLfoTarget = transientContinues
       ? this.ambientLfoTransientTargetLevel()
       : ambientLfoSustained
+    const crowdTarget = transientContinues
+      ? this.crowdTransientTargetLevel()
+      : crowdSustained
 
     const schedule = (
       parameter: AudioParam,
@@ -1522,6 +1649,7 @@ export class CasinoAudioDirector {
     }
 
     schedule(graph.ambient.gain, ambientTarget, ambientSustained)
+    schedule(graph.crowd.gain, crowdTarget, crowdSustained)
     if (this.ambientLfoGain) {
       schedule(
         this.ambientLfoGain.gain,
@@ -1534,12 +1662,11 @@ export class CasinoAudioDirector {
       transientContinues && transient ? transient.until : transitionEnd
   }
 
-  private resetAmbientDuckingImmediately() {
+  private clearAmbientDuckingState() {
     this.dealerVoiceDucking = false
     this.ambientTransientDuck = null
-    const graph = this.graph
-    if (!graph || graph.context.state === 'closed') return
-    this.syncAmbientEnvelope(graph, 0)
+    this.ambientEnvelopeContext = null
+    this.ambientEnvelopeSettlesAt = 0
   }
 
   private setDealerVoiceDucking(ducking: boolean) {
@@ -1583,6 +1710,66 @@ export class CasinoAudioDirector {
       node.connect(panner).connect(graph.effects)
     } else {
       node.connect(graph.effects)
+    }
+  }
+
+  private stableCrowdUnit(value: string) {
+    let hash = 0x811c9dc5
+    for (let index = 0; index < value.length; index += 1) {
+      hash = Math.imul(hash ^ value.charCodeAt(index), 0x01000193)
+    }
+    return (hash >>> 0) / 0xffffffff
+  }
+
+  private crowdVoice(
+    graph: AudioGraph,
+    start: number,
+    duration: number,
+    cutoff: number,
+    pan: number,
+    requestedGain: number,
+    bufferOffset: number,
+  ) {
+    const context = graph.context
+    const source = context.createBufferSource()
+    const filter = context.createBiquadFilter()
+    const gain = context.createGain()
+    const peakGain = Math.max(
+      0.0001,
+      Math.min(CROWD_MAX_PRE_GAIN, requestedGain),
+    )
+    const attackEnd = start + Math.min(0.11, duration * 0.2)
+    const end = start + Math.max(0.42, duration)
+    source.buffer = this.ensureNoiseBuffer(context)
+    filter.type = 'lowpass'
+    filter.frequency.value = Math.max(720, Math.min(1_650, cutoff))
+    filter.Q.value = 0.35
+    gain.gain.setValueAtTime(0.0001, start)
+    gain.gain.exponentialRampToValueAtTime(peakGain, attackEnd)
+    gain.gain.exponentialRampToValueAtTime(0.0001, end)
+    source.connect(filter).connect(gain)
+    const panner = this.createPanner(context, pan)
+    if (panner) {
+      gain.connect(panner).connect(graph.crowd)
+    } else {
+      gain.connect(graph.crowd)
+    }
+    const voice: ActiveCrowdVoice = {
+      context,
+      source,
+      gain,
+      nodes: panner
+        ? [source, filter, gain, panner]
+        : [source, filter, gain],
+      cleanupTimer: null,
+    }
+    this.activeCrowdVoices.add(voice)
+    source.onended = () => this.releaseCrowdVoice(voice, false)
+    try {
+      source.start(start, bufferOffset)
+      source.stop(end + 0.025)
+    } catch {
+      this.releaseCrowdVoice(voice, true)
     }
   }
 
