@@ -20,6 +20,7 @@ import {
   panForSide,
   type AudioSide,
 } from './spatialAudio'
+import { createSeamlessAmbientLoop } from './ambientLoop'
 
 const SOUND_PREFERENCE_KEY = 'nine-road-baccarat:table-audio'
 const AUDIO_MIX_KEY = 'nine-road-baccarat:audio-mix-v1'
@@ -1212,7 +1213,11 @@ export class CasinoAudioDirector {
               throw new Error(`Audio sample HTTP ${response.status}`)
             }
             const encoded = await response.arrayBuffer()
-            const buffer = await context.decodeAudioData(encoded)
+            const decoded = await context.decodeAudioData(encoded)
+            const buffer =
+              sampleId === 'room-crowd-loop'
+                ? createSeamlessAmbientLoop(context, decoded)
+                : decoded
             if (
               this.sampleBufferContext !== context ||
               context.state === 'closed'
